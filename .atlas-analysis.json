@@ -1,0 +1,142 @@
+{
+  "projectType": "framework",
+  "projectName": "LangGraph",
+  "projectDescription": "A low-level orchestration framework for building, managing, and deploying long-running, stateful AI agents.",
+  "theme": "aspen",
+  "primaryColor": "#4F46E5",
+  "lightColor": "#818CF8",
+  "darkColor": "#312E81",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/graphs",
+              "concepts/state",
+              "concepts/nodes-edges",
+              "concepts/checkpointing",
+              "concepts/streaming",
+              "concepts/human-in-the-loop"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/building-graphs",
+              "guides/state-management",
+              "guides/persistence",
+              "guides/memory",
+              "guides/interrupts",
+              "guides/deployment",
+              "guides/debugging"
+            ]
+          },
+          {
+            "group": "Tutorials",
+            "pages": [
+              "tutorials/simple-agent",
+              "tutorials/chatbot",
+              "tutorials/multi-agent",
+              "tutorials/react-agent",
+              "tutorials/tool-calling"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/commands",
+              "cli/configuration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core API",
+            "pages": [
+              "api/graph",
+              "api/state-graph",
+              "api/message-graph",
+              "api/pregel",
+              "api/constants"
+            ]
+          },
+          {
+            "group": "Checkpointing",
+            "pages": [
+              "api/checkpointing/base",
+              "api/checkpointing/sqlite",
+              "api/checkpointing/postgres"
+            ]
+          },
+          {
+            "group": "Prebuilt Components",
+            "pages": [
+              "api/prebuilt/create-react-agent",
+              "api/prebuilt/tool-node",
+              "api/prebuilt/validation-node"
+            ]
+          },
+          {
+            "group": "Types & Config",
+            "pages": [
+              "api/types",
+              "api/config",
+              "api/errors"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "StateGraph - Build stateful workflows with typed state",
+    "MessageGraph - Specialized graphs for chat/message-based applications",
+    "Checkpointing - Persist state with SQLite, Postgres, or custom savers",
+    "Human-in-the-loop - Interrupt execution for human review and intervention",
+    "Durable execution - Automatic recovery from failures with state persistence",
+    "Streaming - Stream outputs in multiple modes (values, updates, messages)",
+    "Multi-agent systems - Coordinate multiple agents with subgraphs",
+    "Command API - Dynamic control flow with Send and Command",
+    "Prebuilt components - Ready-to-use ReAct agents and tool nodes",
+    "CLI tools - Development server, Docker deployment, and project scaffolding"
+  ],
+  "publicApiSurface": [
+    "StateGraph",
+    "MessageGraph",
+    "START",
+    "END",
+    "add_node",
+    "add_edge",
+    "add_conditional_edges",
+    "compile",
+    "invoke",
+    "stream",
+    "create_react_agent",
+    "ToolNode",
+    "tools_condition",
+    "MessagesState",
+    "add_messages",
+    "Command",
+    "Send",
+    "Checkpointer",
+    "RetryPolicy",
+    "CachePolicy",
+    "interrupt",
+    "Pregel"
+  ]
+}
