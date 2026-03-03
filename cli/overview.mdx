@@ -1,0 +1,206 @@
+---
+title: CLI Overview
+description: Introduction to the LangGraph CLI for building and deploying stateful, multi-actor agents
+---
+
+# LangGraph CLI
+
+The LangGraph CLI is the official command-line interface for LangGraph, providing tools to create, develop, and deploy LangGraph applications locally and to production environments.
+
+## What is the LangGraph CLI?
+
+The CLI streamlines your LangGraph development workflow by:
+
+- **Creating** new projects from templates
+- **Developing** locally with hot reloading and debugging
+- **Building** Docker images for deployment
+- **Testing** your graphs in a production-like environment
+- **Deploying** to cloud platforms or self-hosted infrastructure
+
+## Installation
+
+Install the CLI via pip:
+
+```bash
+pip install langgraph-cli
+```
+
+For development mode with hot reloading and in-memory server support:
+
+```bash
+pip install "langgraph-cli[inmem]"
+```
+
+<Note>
+The in-memory development server requires Python 3.11 or higher.
+</Note>
+
+## Quick Start
+
+### 1. Create a New Project
+
+Start a new LangGraph project from a template:
+
+```bash
+langgraph new my-agent --template react-agent
+```
+
+### 2. Develop Locally
+
+Run your agent with hot reloading:
+
+```bash
+cd my-agent
+langgraph dev
+```
+
+This starts a development server at `http://localhost:2024` with:
+- Automatic code reloading on file changes
+- Interactive API documentation at `/docs`
+- LangGraph Studio integration
+
+### 3. Test with Docker
+
+Test your agent in a production-like environment:
+
+```bash
+langgraph up
+```
+
+This launches your agent in Docker with all dependencies properly containerized.
+
+### 4. Build for Production
+
+Create a Docker image for deployment:
+
+```bash
+langgraph build -t my-agent:latest
+```
+
+## Core Concepts
+
+### Configuration File
+
+The CLI uses a `langgraph.json` configuration file that defines:
+
+- **Dependencies**: Python packages required by your agent
+- **Graphs**: Entry points to your compiled graph objects
+- **Environment**: Variables and configuration for runtime
+- **Python Version**: Target Python version for deployment
+
+Example `langgraph.json`:
+
+```json
+{
+  "dependencies": [
+    "langchain-openai",
+    "langchain-anthropic",
+    "."
+  ],
+  "graphs": {
+    "agent": "./src/agent.py:graph"
+  },
+  "env": ".env",
+  "python_version": "3.11"
+}
+```
+
+### Development vs Production
+
+The CLI provides two modes for running your agent:
+
+| Feature | `langgraph dev` | `langgraph up` |
+|---------|----------------|----------------|
+| **Environment** | In-memory server | Docker containers |
+| **Hot Reload** | Yes | Optional with `--watch` |
+| **Setup Time** | Fast | Slower (builds image) |
+| **Use Case** | Development | Testing, Production |
+| **Requirements** | Python 3.11+ | Docker |
+
+## Command Overview
+
+The CLI provides five main commands:
+
+### `langgraph new`
+Create a new project from a template
+
+### `langgraph dev`
+Run a development server with hot reloading
+
+### `langgraph up`
+Launch the API server in Docker
+
+### `langgraph build`
+Build a Docker image for deployment
+
+### `langgraph dockerfile`
+Generate a Dockerfile for custom deployments
+
+## Typical Workflow
+
+1. **Create**: Use `langgraph new` to scaffold a project
+2. **Develop**: Use `langgraph dev` for rapid iteration with hot reload
+3. **Test**: Use `langgraph up` to test in Docker before deploying
+4. **Build**: Use `langgraph build` to create production images
+5. **Deploy**: Push your image to your container registry and deploy
+
+## Project Structure
+
+A typical LangGraph project structure:
+
+```
+my-agent/
+├── langgraph.json       # CLI configuration
+├── .env                 # Environment variables
+├── src/
+│   ├── agent.py        # Your graph definition
+│   └── tools.py        # Agent tools and utilities
+├── requirements.txt     # Additional dependencies (optional)
+└── README.md
+```
+
+## Environment Variables
+
+The CLI respects environment variables defined in:
+
+1. `.env` files (referenced in `langgraph.json`)
+2. System environment variables
+3. Docker Compose environment configurations
+
+Common environment variables:
+
+```bash
+# Development with LangSmith
+LANGSMITH_API_KEY=your-api-key
+
+# Production with license
+LANGGRAPH_CLOUD_LICENSE_KEY=your-license-key
+
+# Model providers
+OPENAI_API_KEY=your-openai-key
+ANTHROPIC_API_KEY=your-anthropic-key
+```
+
+## Next Steps
+
+- Learn about all [CLI commands and options](/cli/commands)
+- Understand [langgraph.json configuration](/cli/configuration)
+- Explore [deployment options](/deployment/overview)
+
+## Getting Help
+
+View help for any command:
+
+```bash
+langgraph --help
+langgraph dev --help
+langgraph build --help
+```
+
+## Version Information
+
+Check your CLI version:
+
+```bash
+langgraph --version
+```

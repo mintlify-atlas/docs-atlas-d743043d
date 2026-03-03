@@ -1,0 +1,120 @@
+---
+title: Introduction to LangGraph
+description: Build stateful, multi-actor applications with LLMs using LangGraph's low-level orchestration framework
+---
+
+# Introduction to LangGraph
+
+Trusted by companies shaping the future of agents – including Klarna, Replit, Elastic, and more – LangGraph is a low-level orchestration framework for building, managing, and deploying long-running, stateful agents.
+
+## What is LangGraph?
+
+LangGraph is a framework for building stateful, multi-actor applications with Large Language Models (LLMs). Unlike high-level abstractions that hide complexity, LangGraph provides low-level supporting infrastructure for **any** long-running, stateful workflow or agent.
+
+LangGraph does not abstract prompts or architecture. Instead, it gives you the tools to build exactly what you need, with full control over your agent's behavior.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Get up and running with LangGraph in under 5 minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install LangGraph with pip, poetry, or uv
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts">
+    Learn about StateGraph, nodes, edges, and state management
+  </Card>
+  <Card title="API Reference" icon="code" href="https://reference.langchain.com/python/langgraph/">
+    Explore the complete LangGraph API documentation
+  </Card>
+</CardGroup>
+
+## Core Benefits
+
+LangGraph provides essential infrastructure for production-grade agent systems:
+
+### Durable Execution
+
+Build agents that persist through failures and can run for extended periods, automatically resuming from exactly where they left off. Your agents can survive crashes, restarts, and infrastructure changes without losing context.
+
+### Human-in-the-Loop
+
+Seamlessly incorporate human oversight by inspecting and modifying agent state at any point during execution. Pause workflows for approval, inject corrections, or guide the agent's decision-making process.
+
+### Comprehensive Memory
+
+Create truly stateful agents with both:
+- **Short-term working memory** for ongoing reasoning and context within a single execution
+- **Long-term persistent memory** across sessions, enabling agents to learn and improve over time
+
+### Debugging with LangSmith
+
+Gain deep visibility into complex agent behavior with visualization tools that trace execution paths, capture state transitions, and provide detailed runtime metrics. Debug issues faster and understand exactly what your agents are doing.
+
+### Production-Ready Deployment
+
+Deploy sophisticated agent systems confidently with scalable infrastructure designed to handle the unique challenges of stateful, long-running workflows.
+
+## Real-World Use Cases
+
+LangGraph excels at building:
+
+- **Conversational Agents**: Multi-turn chatbots with memory and context awareness
+- **Research Assistants**: Agents that gather information, analyze data, and synthesize findings
+- **Code Generation Tools**: AI-powered development assistants that understand project context
+- **Workflow Automation**: Complex multi-step processes with decision points and error handling
+- **Multi-Agent Systems**: Coordinated teams of specialized agents working together
+- **RAG Applications**: Retrieval-augmented generation with sophisticated query planning
+
+## Key Features
+
+<Note>
+LangGraph is built on top of battle-tested foundations, inspired by Google's Pregel and Apache Beam, with a public interface drawing from NetworkX.
+</Note>
+
+- **State Management**: Define typed state schemas with automatic validation
+- **Graph-based Workflows**: Build complex workflows as directed graphs with nodes and edges
+- **Conditional Routing**: Dynamic execution paths based on state or LLM outputs
+- **Checkpointing**: Automatic state persistence for durability and time-travel debugging
+- **Streaming Support**: Real-time updates as your agent executes
+- **Subgraphs**: Compose smaller graphs into larger systems
+- **Parallel Execution**: Run multiple nodes concurrently for better performance
+
+## LangGraph Ecosystem
+
+While LangGraph can be used standalone, it integrates seamlessly with the broader LangChain ecosystem:
+
+- **LangSmith**: Agent evaluations, observability, and debugging. Trace poor-performing runs, evaluate agent trajectories, and gain production visibility.
+- **LangSmith Deployment**: Deploy and scale agents with a purpose-built platform for long-running, stateful workflows. Prototype visually with LangGraph Studio.
+- **LangChain**: Integrations and composable components to streamline LLM application development.
+
+<Tip>
+LangGraph is built by LangChain Inc, the creators of LangChain, but can be used completely independently without LangChain.
+</Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Start Building" icon="rocket" href="/quickstart">
+    Create your first LangGraph application
+  </Card>
+  <Card title="Learn the Concepts" icon="graduation-cap" href="https://docs.langchain.com/oss/python/langgraph/guides">
+    Deep dive into LangGraph patterns and best practices
+  </Card>
+  <Card title="Explore Examples" icon="flask" href="https://docs.langchain.com/oss/python/langgraph/agentic-rag">
+    See real-world implementations and use cases
+  </Card>
+  <Card title="Join the Community" icon="users" href="https://forum.langchain.com/">
+    Connect with other developers and get help
+  </Card>
+</CardGroup>
+
+## Additional Resources
+
+- [LangChain Academy](https://academy.langchain.com/courses/intro-to-langgraph): Free structured course on LangGraph basics
+- [Case Studies](https://www.langchain.com/built-with-langgraph): Learn how industry leaders use LangGraph at scale
+- [LangChain Forum](https://forum.langchain.com/): Share technical questions, ideas, and feedback
+- [GitHub Repository](https://github.com/langchain-ai/langgraph): Explore the source code and contribute
+
+<Note>
+Looking for the JavaScript version? Check out the [LangGraph.js documentation](https://docs.langchain.com/oss/javascript/langgraph/overview).
+</Note>

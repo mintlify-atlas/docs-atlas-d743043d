@@ -1,0 +1,280 @@
+---
+title: State Management
+description: Advanced patterns for managing state in LangGraph applications
+---
+
+State management is central to building robust LangGraph applications. This guide covers advanced patterns for defining, updating, and transforming state.
+
+## State Schemas
+
+### TypedDict State
+
+The most common approach is using TypedDict:
+
+```python
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    input: str
+    results: list[str]
+    final_answer: str
+```
+
+### Pydantic Models
+
+For validation and complex data structures, use Pydantic:
+
+```python
+from pydantic import BaseModel, Field
+
+class State(BaseModel):
+    input: str
+    results: list[str] = Field(default_factory=list)
+    final_answer: str | None = None
+```
+
+## State Reducers
+
+Reducers define how state updates are merged with existing state.
+
+### Built-in Reducers
+
+#### add_messages
+
+For message-based workflows:
+
+```python
+from typing import Annotated
+from collections.abc import Sequence
+from langchain_core.messages import BaseMessage
+from langgraph.graph import add_messages
+
+class ChatState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+```
+
+The `add_messages` reducer:
+- Appends new messages to the list
+- Updates messages with matching IDs
+- Supports message deletion with `RemoveMessage`
+
+#### Operator Reducers
+
+Use operators for simple reductions:
+
+```python
+from typing import Annotated
+from operator import add
+
+class State(TypedDict):
+    # Accumulate values by addition
+    total: Annotated[int, add]
+```
+
+### Custom Reducers
+
+Define custom reducer functions:
+
+```python
+from typing import Annotated
+
+def merge_lists(left: list, right: list) -> list:
+    """Merge lists, removing duplicates while preserving order."""
+    seen = set(left)
+    result = list(left)
+    for item in right:
+        if item not in seen:
+            result.append(item)
+            seen.add(item)
+    return result
+
+class State(TypedDict):
+    items: Annotated[list[str], merge_lists]
+```
+
+## Updating State
+
+### Returning Updates
+
+Nodes return dictionaries with state updates:
+
+```python
+def process_node(state: State) -> dict:
+    # Process input
+    result = process(state["input"])
+    
+    # Return partial update
+    return {"results": [result]}
+```
+
+### Multiple Updates
+
+Return multiple state fields:
+
+```python
+def analyze_node(state: State) -> dict:
+    results = state["results"]
+    analysis = analyze(results)
+    
+    return {
+        "analysis": analysis,
+        "final_answer": generate_answer(analysis),
+    }
+```
+
+### Conditional Updates
+
+Update state conditionally based on logic:
+
+```python
+def conditional_node(state: State) -> dict:
+    if should_update(state):
+        return {"status": "updated"}
+    return {}  # No update
+```
+
+## State Channels
+
+LangGraph uses channels internally to manage state.
+
+### Channel Types
+
+- **LastValue**: Stores the most recent value (default)
+- **BinaryOperatorAggregate**: Applies a binary operator (e.g., `add`)
+- **Topic**: For pub/sub patterns
+
+### Ephemeral State
+
+Some state doesn't need persistence:
+
+```python
+from langgraph.channels.ephemeral_value import EphemeralValue
+
+# Ephemeral values are not saved to checkpoints
+channels = {
+    "temp_data": EphemeralValue(str),
+}
+```
+
+## Input and Output Schemas
+
+Define separate schemas for input and output:
+
+```python
+class InputState(TypedDict):
+    question: str
+
+class OutputState(TypedDict):
+    answer: str
+
+class InternalState(TypedDict):
+    question: str
+    context: list[str]
+    answer: str
+
+graph = StateGraph(
+    InternalState,
+    input_schema=InputState,
+    output_schema=OutputState,
+)
+```
+
+This provides a clean API:
+- **Input**: Only accepts `question`
+- **Output**: Only returns `answer`
+- **Internal**: Full state available to nodes
+
+## Context Schema
+
+Use context for runtime configuration:
+
+```python
+from typing import Literal
+from langgraph.runtime import Runtime
+
+class AgentContext(TypedDict):
+    model: Literal["anthropic", "openai"]
+
+def call_model(state, runtime: Runtime[AgentContext]):
+    model_choice = runtime.context.get("model", "anthropic")
+    # Use the selected model
+    ...
+
+graph = StateGraph(AgentState, context_schema=AgentContext)
+```
+
+## State Inspection
+
+Inspect state during execution:
+
+```python
+# Get current state
+state = app.get_state(config)
+print(state.values)
+
+# Get state history
+for state in app.get_state_history(config):
+    print(f"Step {state.metadata['step']}: {state.values}")
+```
+
+## Advanced Patterns
+
+### Managed Values
+
+LangGraph provides managed values that are automatically handled:
+
+```python
+from langgraph.managed import IsLastStep
+
+class State(TypedDict):
+    is_last_step: IsLastStep
+```
+
+Available managed values:
+- `IsLastStep`: Boolean indicating if this is the last step
+- `RemainingSteps`: Number of remaining steps
+
+### Dynamic Send
+
+Send dynamic updates to specific nodes:
+
+```python
+from langgraph.types import Send
+
+def fan_out_node(state: State):
+    return [
+        Send("process_item", {"item": item})
+        for item in state["items"]
+    ]
+```
+
+### Command Pattern
+
+Use `Command` for advanced control flow:
+
+```python
+from langgraph.types import Command
+
+def decision_node(state: State):
+    if should_interrupt():
+        return Command(
+            update={"status": "paused"},
+            goto="human_review",
+        )
+    return {"status": "continuing"}
+```
+
+## Best Practices
+
+- **Keep state flat**: Avoid deeply nested structures
+- **Use type hints**: Enable better IDE support and validation
+- **Choose the right reducer**: Match the reducer to your data merging needs
+- **Separate concerns**: Use input/output schemas for clean APIs
+- **Document state fields**: Add docstrings to state classes
+- **Validate state**: Use Pydantic for runtime validation when needed
+
+## Next Steps
+
+- Learn about [Persistence](/guides/persistence) to save state across executions
+- Explore [Memory](/guides/memory) for long-term state storage
+- Add [Interrupts](/guides/interrupts) to modify state during execution

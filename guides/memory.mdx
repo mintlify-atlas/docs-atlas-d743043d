@@ -1,0 +1,411 @@
+---
+title: Memory
+description: Implement short-term and long-term memory in LangGraph agents
+---
+
+Memory in LangGraph enables agents to remember information across interactions, creating more contextual and personalized experiences.
+
+## Types of Memory
+
+LangGraph supports two types of memory:
+
+- **Short-term memory**: Conversation state within a single thread (via checkpointers)
+- **Long-term memory**: Persistent storage across threads and sessions (via stores)
+
+## Short-Term Memory
+
+Short-term memory is automatically handled through checkpointers and message state.
+
+### Message History
+
+Use `MessagesState` or `add_messages` for conversation history:
+
+```python
+from typing import Annotated
+from collections.abc import Sequence
+from langchain_core.messages import BaseMessage
+from langgraph.graph import StateGraph, add_messages
+from typing_extensions import TypedDict
+
+class ChatState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+
+graph = StateGraph(ChatState)
+```
+
+The `add_messages` reducer maintains conversation history:
+
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+
+memory = InMemorySaver()
+app = graph.compile(checkpointer=memory)
+
+# First message
+config = {"configurable": {"thread_id": "user-123"}}
+app.invoke(
+    {"messages": [{"role": "user", "content": "My name is Alice"}]},
+    config,
+)
+
+# Later message - agent remembers Alice
+app.invoke(
+    {"messages": [{"role": "user", "content": "What's my name?"}]},
+    config,
+)
+```
+
+### Trimming History
+
+Manage message history length:
+
+```python
+from langchain_core.messages import trim_messages
+
+def trim_history(state: ChatState) -> dict:
+    """Keep only the last 10 messages."""
+    messages = state["messages"]
+    trimmed = trim_messages(
+        messages,
+        max_tokens=4000,
+        strategy="last",
+        token_counter=len,  # Use actual token counter
+    )
+    return {"messages": trimmed}
+
+# Add as a node
+graph.add_node("trim", trim_history)
+```
+
+### Semantic Trimming
+
+Keep important messages:
+
+```python
+from langchain_core.messages import filter_messages
+
+def keep_important(state: ChatState) -> dict:
+    """Keep system messages and recent user messages."""
+    messages = filter_messages(
+        state["messages"],
+        include_types=["system", "user"],
+        max_count=20,
+    )
+    return {"messages": messages}
+```
+
+## Long-Term Memory
+
+Long-term memory persists information across conversations using stores.
+
+### Store Interface
+
+Stores provide key-value storage with namespaces:
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+# Create store
+store = InMemoryStore()
+
+# Compile with store
+app = graph.compile(checkpointer=memory, store=store)
+```
+
+### Storing User Preferences
+
+```python
+from langgraph.store.base import BaseStore
+
+def save_preference_node(state: State, *, store: BaseStore):
+    """Extract and save user preferences."""
+    user_id = state["user_id"]
+    preference = state["detected_preference"]
+    
+    # Store in user namespace
+    store.put(
+        namespace=("users", user_id),
+        key="preferences",
+        value={"preference": preference},
+    )
+    
+    return {"status": "saved"}
+
+def retrieve_preference_node(state: State, *, store: BaseStore):
+    """Load user preferences."""
+    user_id = state["user_id"]
+    
+    # Retrieve from store
+    item = store.get(
+        namespace=("users", user_id),
+        key="preferences",
+    )
+    
+    preference = item.value.get("preference") if item else None
+    return {"user_preference": preference}
+```
+
+### Memory Store Pattern
+
+Create a dedicated memory system:
+
+```python
+class MemoryState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+    user_id: str
+    memories: list[str]
+
+def extract_memories(state: MemoryState, *, store: BaseStore):
+    """Extract and store important information."""
+    messages = state["messages"]
+    user_id = state["user_id"]
+    
+    # Use LLM to extract facts
+    facts = extract_facts_from_conversation(messages)
+    
+    # Store each fact
+    for fact in facts:
+        store.put(
+            namespace=("memories", user_id),
+            key=str(uuid.uuid4()),
+            value={"fact": fact, "timestamp": datetime.now()},
+        )
+    
+    return {}
+
+def recall_memories(state: MemoryState, *, store: BaseStore):
+    """Retrieve relevant memories."""
+    user_id = state["user_id"]
+    current_message = state["messages"][-1].content
+    
+    # Search memories
+    items = store.search(
+        namespace=("memories", user_id),
+        query=current_message,  # Semantic search if supported
+        limit=5,
+    )
+    
+    memories = [item.value["fact"] for item in items]
+    return {"memories": memories}
+```
+
+### Vector Store Integration
+
+For semantic search over memories:
+
+```python
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+
+class VectorMemoryState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+    context: str
+
+# Initialize vector store
+embeddings = OpenAIEmbeddings()
+vector_store = FAISS.from_texts([], embeddings)
+
+def store_memory(state: VectorMemoryState):
+    """Store conversation in vector DB."""
+    last_message = state["messages"][-1].content
+    
+    # Add to vector store with metadata
+    vector_store.add_texts(
+        [last_message],
+        metadatas=[{"timestamp": datetime.now().isoformat()}],
+    )
+    
+    return {}
+
+def retrieve_context(state: VectorMemoryState):
+    """Retrieve relevant context."""
+    query = state["messages"][-1].content
+    
+    # Semantic search
+    docs = vector_store.similarity_search(query, k=3)
+    context = "\n".join([doc.page_content for doc in docs])
+    
+    return {"context": context}
+```
+
+## Memory Architectures
+
+### Summary Memory
+
+Summarize old messages to save context:
+
+```python
+def summarize_conversation(state: ChatState):
+    """Summarize older messages."""
+    messages = state["messages"]
+    
+    if len(messages) > 20:
+        # Summarize messages 0-15
+        old_messages = messages[:15]
+        summary = llm.invoke(
+            f"Summarize this conversation: {old_messages}"
+        )
+        
+        # Keep summary + recent messages
+        new_messages = [
+            {"role": "system", "content": f"Previous conversation: {summary}"},
+            *messages[15:],
+        ]
+        return {"messages": new_messages}
+    
+    return {}
+```
+
+### Entity Memory
+
+Track entities across conversations:
+
+```python
+class EntityMemory(TypedDict):
+    entities: dict[str, dict]  # name -> properties
+
+def extract_entities(state: State, *, store: BaseStore):
+    """Extract and update entity information."""
+    user_id = state["user_id"]
+    message = state["messages"][-1].content
+    
+    # Extract entities with LLM
+    entities = extract_entities_from_text(message)
+    
+    for entity_name, properties in entities.items():
+        # Get existing entity
+        item = store.get(
+            namespace=("entities", user_id),
+            key=entity_name,
+        )
+        
+        # Merge properties
+        existing = item.value if item else {}
+        updated = {**existing, **properties}
+        
+        # Update store
+        store.put(
+            namespace=("entities", user_id),
+            key=entity_name,
+            value=updated,
+        )
+    
+    return {}
+```
+
+### Knowledge Graph Memory
+
+Build relationships between entities:
+
+```python
+import networkx as nx
+
+class GraphMemory:
+    def __init__(self):
+        self.graph = nx.DiGraph()
+    
+    def add_fact(self, subject: str, predicate: str, object: str):
+        """Add a fact to the knowledge graph."""
+        self.graph.add_edge(subject, object, relation=predicate)
+    
+    def query(self, entity: str, hops: int = 2):
+        """Get related entities within N hops."""
+        if entity not in self.graph:
+            return []
+        
+        # Get subgraph within N hops
+        nodes = nx.single_source_shortest_path_length(
+            self.graph, entity, cutoff=hops
+        )
+        
+        return list(nodes.keys())
+
+# Use in node
+def query_knowledge(state: State, *, graph_memory: GraphMemory):
+    current_topic = state["current_topic"]
+    related = graph_memory.query(current_topic)
+    return {"related_topics": related}
+```
+
+## Memory Management
+
+### Forgetting
+
+Implement memory decay:
+
+```python
+import datetime
+
+def clean_old_memories(store: BaseStore, user_id: str, days: int = 30):
+    """Remove memories older than N days."""
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
+    
+    # List all memories
+    items = store.search(
+        namespace=("memories", user_id),
+        filter={},
+    )
+    
+    # Delete old ones
+    for item in items:
+        if item.value.get("timestamp") < cutoff:
+            store.delete(
+                namespace=("memories", user_id),
+                key=item.key,
+            )
+```
+
+### Memory Consolidation
+
+Merge similar memories:
+
+```python
+def consolidate_memories(state: State, *, store: BaseStore):
+    """Merge similar memories to reduce redundancy."""
+    user_id = state["user_id"]
+    
+    # Get all memories
+    items = store.search(
+        namespace=("memories", user_id),
+        filter={},
+    )
+    
+    # Group similar memories (using embeddings)
+    clusters = cluster_similar_memories(items)
+    
+    # Merge each cluster
+    for cluster in clusters:
+        merged = merge_memory_cluster(cluster)
+        
+        # Delete old memories
+        for item in cluster:
+            store.delete(
+                namespace=("memories", user_id),
+                key=item.key,
+            )
+        
+        # Store merged memory
+        store.put(
+            namespace=("memories", user_id),
+            key=str(uuid.uuid4()),
+            value=merged,
+        )
+    
+    return {}
+```
+
+## Best Practices
+
+- **Separate thread and cross-thread memory**: Use checkpointers for thread state, stores for cross-thread data
+- **Index your stores**: Add indexes on frequently queried fields
+- **Implement memory limits**: Prevent unbounded growth
+- **Use semantic search**: Vector stores enable better context retrieval
+- **Privacy considerations**: Implement user data deletion
+- **Test memory behavior**: Verify memories persist and load correctly
+- **Monitor memory size**: Track storage usage per user
+
+## Next Steps
+
+- Add [Interrupts](/guides/interrupts) to review memories before saving
+- Learn about [Deployment](/guides/deployment) for production memory systems
+- Explore [Debugging](/guides/debugging) to trace memory operations

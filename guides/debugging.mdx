@@ -1,0 +1,463 @@
+---
+title: Debugging
+description: Debug LangGraph applications with built-in tools and techniques
+---
+
+Debugging LangGraph applications requires understanding graph execution, state transitions, and node behavior. This guide covers essential debugging techniques.
+
+## Visualization
+
+### Print Graph Structure
+
+Visualize your graph structure:
+
+```python
+from langgraph.graph import StateGraph
+
+graph = StateGraph(State)
+# ... add nodes and edges ...
+
+app = graph.compile()
+
+# Print ASCII representation
+print(app.get_graph().print_ascii())
+```
+
+Output:
+```
+    ┌─────────┐
+    │ __start__ │
+    └─────────┘
+         *
+         *
+         *
+    ┌─────────┐
+    │  agent   │
+    └─────────┘
+      *       *
+    **         **
+   *             *
+┌─────────┐  ┌────────┐
+│  tools   │  │  __end__ │
+└─────────┘  └────────┘
+```
+
+### Generate Mermaid Diagram
+
+Create visual diagrams:
+
+```python
+# Get Mermaid diagram
+mermaid_graph = app.get_graph().draw_mermaid()
+print(mermaid_graph)
+
+# Or save to file
+with open("graph.mmd", "w") as f:
+    f.write(mermaid_graph)
+```
+
+### Use LangGraph Studio
+
+For interactive visualization:
+
+```bash
+# Install LangGraph CLI
+pip install langgraph-cli
+
+# Start LangGraph Studio
+langgraph dev
+```
+
+LangGraph Studio provides:
+- Interactive graph visualization
+- Step-by-step execution
+- State inspection
+- Breakpoints
+
+## Execution Tracing
+
+### Debug Mode
+
+Enable debug mode for detailed logging:
+
+```python
+app = graph.compile(debug=True)
+
+# Stream debug events
+for event in app.stream(
+    {"messages": [...]},
+    config,
+    stream_mode="debug",
+):
+    print(event)
+```
+
+### Stream Modes
+
+Use different streaming modes to observe execution:
+
+#### Values Mode
+
+```python
+# Stream full state after each step
+for state in app.stream(input_data, config, stream_mode="values"):
+    print(f"Current state: {state}")
+```
+
+#### Updates Mode
+
+```python
+# Stream only updates from each node
+for update in app.stream(input_data, config, stream_mode="updates"):
+    print(f"Node: {update[0]}, Update: {update[1]}")
+```
+
+#### Tasks Mode
+
+```python
+# Stream task start/finish events
+for event in app.stream(input_data, config, stream_mode="tasks"):
+    if event["event"] == "task_start":
+        print(f"Starting task: {event['name']}")
+    elif event["event"] == "task_finish":
+        print(f"Finished task: {event['name']}")
+        print(f"Result: {event['result']}")
+```
+
+#### Messages Mode
+
+```python
+# Stream LLM messages token-by-token
+for message_chunk in app.stream(input_data, config, stream_mode="messages"):
+    print(message_chunk, end="", flush=True)
+```
+
+## State Inspection
+
+### Get Current State
+
+```python
+# Invoke graph
+result = app.invoke(input_data, config)
+
+# Get current state
+state = app.get_state(config)
+
+print(f"Values: {state.values}")
+print(f"Next nodes: {state.next}")
+print(f"Config: {state.config}")
+print(f"Metadata: {state.metadata}")
+```
+
+### Inspect State History
+
+```python
+# Get full execution history
+for i, state in enumerate(app.get_state_history(config)):
+    print(f"\nStep {i}:")
+    print(f"  Node: {state.metadata.get('source')}")
+    print(f"  State: {state.values}")
+    print(f"  Step: {state.metadata.get('step')}")
+```
+
+### Check Pending Tasks
+
+```python
+state = app.get_state(config)
+
+if state.tasks:
+    print("Pending tasks:")
+    for task in state.tasks:
+        print(f"  - {task.name}: {task.input}")
+```
+
+## LangSmith Tracing
+
+Integrate with LangSmith for comprehensive debugging:
+
+```python
+import os
+
+# Enable LangSmith tracing
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_API_KEY"] = "your-api-key"
+os.environ["LANGCHAIN_PROJECT"] = "debugging-session"
+
+# Run graph - traces automatically sent to LangSmith
+result = app.invoke(input_data, config)
+```
+
+LangSmith provides:
+- Full execution traces
+- LLM call inspection
+- Latency analysis
+- Error tracking
+- Cost monitoring
+
+## Common Issues
+
+### State Not Updating
+
+Debug state update issues:
+
+```python
+def debug_node(state: State) -> dict:
+    """Node with debug logging."""
+    print(f"Input state: {state}")
+    
+    # Process
+    result = process(state)
+    update = {"result": result}
+    
+    print(f"Update: {update}")
+    return update
+```
+
+### Infinite Loops
+
+Detect and prevent infinite loops:
+
+```python
+from langgraph.graph import StateGraph
+
+# Set max recursion limit
+app = graph.compile(
+    checkpointer=memory,
+    recursion_limit=50,  # Prevent infinite loops
+)
+
+try:
+    result = app.invoke(input_data, config)
+except RecursionError:
+    print("Graph exceeded recursion limit")
+    
+    # Inspect state
+    state = app.get_state(config)
+    print(f"Stuck at: {state.next}")
+    print(f"State: {state.values}")
+```
+
+### Missing Edges
+
+Verify graph connectivity:
+
+```python
+# Check graph structure
+graph_def = app.get_graph()
+
+print("Nodes:", graph_def.nodes)
+print("Edges:", graph_def.edges)
+
+# Ensure all nodes are reachable
+for node in graph_def.nodes:
+    incoming = [e for e in graph_def.edges if e[1] == node]
+    if not incoming and node != "__start__":
+        print(f"Warning: {node} has no incoming edges")
+```
+
+### Conditional Edge Issues
+
+Debug routing logic:
+
+```python
+def should_continue(state: State):
+    """Conditional edge with debug logging."""
+    result = determine_next(state)
+    print(f"Routing from conditional: {result}")
+    print(f"State: {state}")
+    return result
+
+graph.add_conditional_edges("agent", should_continue, {...})
+```
+
+## Error Handling
+
+### Catch and Log Errors
+
+```python
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
+
+def safe_node(state: State) -> dict:
+    """Node with error handling."""
+    try:
+        result = risky_operation(state)
+        return {"result": result}
+    except Exception as e:
+        logger.error(f"Error in node: {e}")
+        logger.error(traceback.format_exc())
+        
+        # Return error state
+        return {"error": str(e), "status": "failed"}
+```
+
+### Retry Failed Nodes
+
+Use retry policies:
+
+```python
+from langgraph.types import RetryPolicy
+
+retry_policy = RetryPolicy(
+    initial_interval=1.0,
+    max_attempts=3,
+    backoff_factor=2.0,
+)
+
+graph.add_node(
+    "flaky_node",
+    flaky_function,
+    retry_policy=retry_policy,
+)
+```
+
+### Global Error Handler
+
+```python
+from langchain_core.runnables import RunnableConfig
+
+def error_handler(error: Exception, config: RunnableConfig):
+    """Global error handler."""
+    logger.error(f"Graph error: {error}")
+    logger.error(f"Config: {config}")
+    
+    # Send to monitoring
+    send_to_sentry(error, config)
+
+app = graph.compile(
+    checkpointer=memory,
+    on_error=error_handler,
+)
+```
+
+## Performance Debugging
+
+### Measure Node Execution Time
+
+```python
+import time
+from functools import wraps
+
+def timing_decorator(func):
+    @wraps(func)
+    def wrapper(state, *args, **kwargs):
+        start = time.time()
+        result = func(state, *args, **kwargs)
+        duration = time.time() - start
+        print(f"{func.__name__} took {duration:.2f}s")
+        return result
+    return wrapper
+
+@timing_decorator
+def slow_node(state: State) -> dict:
+    # Process...
+    return {...}
+```
+
+### Profile Memory Usage
+
+```python
+import tracemalloc
+
+tracemalloc.start()
+
+# Run graph
+result = app.invoke(input_data, config)
+
+current, peak = tracemalloc.get_traced_memory()
+print(f"Current memory: {current / 10**6:.1f}MB")
+print(f"Peak memory: {peak / 10**6:.1f}MB")
+
+tracemalloc.stop()
+```
+
+### Analyze Bottlenecks
+
+```python
+import cProfile
+import pstats
+
+# Profile execution
+profiler = cProfile.Profile()
+profiler.enable()
+
+result = app.invoke(input_data, config)
+
+profiler.disable()
+stats = pstats.Stats(profiler)
+stats.sort_stats('cumulative')
+stats.print_stats(20)  # Top 20 functions
+```
+
+## Testing
+
+### Unit Test Nodes
+
+```python
+import pytest
+
+def test_node_function():
+    """Test node in isolation."""
+    state = {"input": "test"}
+    result = my_node(state)
+    
+    assert "output" in result
+    assert result["output"] == "expected"
+```
+
+### Integration Test Graphs
+
+```python
+def test_full_graph():
+    """Test complete graph execution."""
+    from langgraph.checkpoint.memory import InMemorySaver
+    
+    memory = InMemorySaver()
+    app = graph.compile(checkpointer=memory)
+    
+    config = {"configurable": {"thread_id": "test-1"}}
+    result = app.invoke({"input": "test"}, config)
+    
+    assert result["output"] == "expected"
+    
+    # Verify state
+    state = app.get_state(config)
+    assert state.next == []  # Graph completed
+```
+
+### Mock External Services
+
+```python
+from unittest.mock import patch, MagicMock
+
+def test_with_mocked_llm():
+    """Test with mocked LLM."""
+    with patch('langchain_openai.ChatOpenAI') as mock_llm:
+        mock_llm.return_value.invoke.return_value = MagicMock(
+            content="Mocked response"
+        )
+        
+        result = app.invoke({"input": "test"}, config)
+        assert "Mocked response" in str(result)
+```
+
+## Best Practices
+
+- **Use LangSmith**: Essential for production debugging
+- **Enable debug mode**: During development for detailed logs
+- **Visualize graphs**: Understand structure before debugging behavior
+- **Test nodes independently**: Isolate issues to specific nodes
+- **Check state history**: Understand state transitions
+- **Add logging**: Strategic logging in complex nodes
+- **Use breakpoints**: In LangGraph Studio or with `interrupt()`
+- **Monitor performance**: Track execution time and memory
+- **Handle errors gracefully**: Don't let exceptions crash the graph
+- **Write tests**: Catch issues before production
+
+## Next Steps
+
+- Review [Deployment](/guides/deployment) for production monitoring
+- Explore [Interrupts](/guides/interrupts) for interactive debugging
+- Learn about [LangSmith](https://docs.langchain.com/langsmith/) for observability

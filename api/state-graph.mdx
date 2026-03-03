@@ -1,0 +1,582 @@
+---
+title: StateGraph
+description: Build stateful graphs with type-safe state management
+---
+
+The `StateGraph` class is the primary interface for building stateful, multi-actor applications with LangGraph. It provides a declarative API for defining nodes, edges, and state schemas.
+
+**Defined in:** `langgraph/graph/state.py:113`
+
+## Overview
+
+`StateGraph` is a graph whose nodes communicate by reading and writing to a shared state. The signature of each node is `State -> Partial<State>`. Each state key can optionally be annotated with a reducer function that will be used to aggregate the values of that key received from multiple nodes.
+
+**Warning:** `StateGraph` is a builder class and cannot be used directly for execution. You must first call `.compile()` to create a `CompiledStateGraph` object that supports methods like `invoke()`, `stream()`, `astream()`, and `ainvoke()`.
+
+## Constructor
+
+```python
+StateGraph(
+    state_schema: type[StateT],
+    context_schema: type[ContextT] | None = None,
+    *,
+    input_schema: type[InputT] | None = None,
+    output_schema: type[OutputT] | None = None,
+)
+```
+
+### Parameters
+
+<ParamField path="state_schema" type="type[StateT]" required>
+  The schema class that defines the state. Can be a `TypedDict`, Pydantic model, or dataclass.
+
+  Each field can be annotated with a reducer function using `Annotated[type, reducer]` syntax.
+</ParamField>
+
+<ParamField path="context_schema" type="type[ContextT] | None" default="None">
+  The schema class that defines the runtime context.
+
+  Use this to expose immutable context data to your nodes, like `user_id`, `db_conn`, etc. Context is accessible via the `Runtime` object injected into nodes.
+</ParamField>
+
+<ParamField path="input_schema" type="type[InputT] | None" default="None">
+  The schema class that defines the input to the graph. If not provided, defaults to `state_schema`.
+
+  Use this to accept a subset of the state schema as input.
+</ParamField>
+
+<ParamField path="output_schema" type="type[OutputT] | None" default="None">
+  The schema class that defines the output from the graph. If not provided, defaults to `state_schema`.
+
+  Use this to return a subset of the state schema as output.
+</ParamField>
+
+### Usage Example
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph
+from langgraph.runtime import Runtime
+
+def reducer(a: list, b: int | None) -> list:
+    if b is not None:
+        return a + [b]
+    return a
+
+class State(TypedDict):
+    x: Annotated[list, reducer]
+
+class Context(TypedDict):
+    user_id: str
+
+graph = StateGraph(state_schema=State, context_schema=Context)
+
+def node(state: State, runtime: Runtime[Context]) -> dict:
+    user_id = runtime.context.get("user_id")
+    return {"x": len(state["x"])}
+
+graph.add_node("A", node)
+graph.set_entry_point("A")
+graph.set_finish_point("A")
+compiled = graph.compile()
+
+result = compiled.invoke({"x": [1, 2, 3]}, context={"user_id": "123"})
+# {'x': [1, 2, 3, 3]}
+```
+
+## Methods
+
+### add_node
+
+```python
+add_node(
+    node: str | StateNode[NodeInputT, ContextT],
+    action: StateNode[NodeInputT, ContextT] | None = None,
+    *,
+    defer: bool = False,
+    metadata: dict[str, Any] | None = None,
+    input_schema: type[NodeInputT] | None = None,
+    retry_policy: RetryPolicy | Sequence[RetryPolicy] | None = None,
+    cache_policy: CachePolicy | None = None,
+    destinations: dict[str, str] | tuple[str, ...] | None = None,
+) -> Self
+```
+
+Add a new node to the StateGraph.
+
+#### Parameters
+
+<ParamField path="node" type="str | StateNode" required>
+  The function or runnable this node will run.
+
+  If a string is provided, it will be used as the node name, and `action` will be used as the function or runnable. Otherwise, the name is inferred from the function/runnable name.
+</ParamField>
+
+<ParamField path="action" type="StateNode | None" default="None">
+  The action associated with the node. Required if `node` is a string.
+</ParamField>
+
+<ParamField path="defer" type="bool" default="False">
+  Whether to defer the execution of the node until the run is about to end.
+</ParamField>
+
+<ParamField path="metadata" type="dict[str, Any] | None" default="None">
+  Metadata associated with the node.
+</ParamField>
+
+<ParamField path="input_schema" type="type[NodeInputT] | None" default="None">
+  The input schema for the node. If not provided, defaults to the graph's state schema.
+
+  Use this to provide a subset of the state to the node.
+</ParamField>
+
+<ParamField path="retry_policy" type="RetryPolicy | Sequence[RetryPolicy] | None" default="None">
+  Retry policy for the node. If a sequence is provided, the first matching policy will be applied.
+</ParamField>
+
+<ParamField path="cache_policy" type="CachePolicy | None" default="None">
+  Cache policy for the node.
+</ParamField>
+
+<ParamField path="destinations" type="dict[str, str] | tuple[str, ...] | None" default="None">
+  Destinations that indicate where a node can route to. Useful for edgeless graphs with nodes that return `Command` objects.
+
+  If a `dict` is provided, the keys are target node names and values are edge labels. If a `tuple` is provided, the values are target node names.
+
+  **Note:** This is only used for graph rendering and doesn't affect graph execution.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="Self">
+  The instance of the StateGraph, allowing for method chaining.
+</ResponseField>
+
+#### Usage Example
+
+```python
+from typing_extensions import TypedDict
+from langgraph.graph import START, StateGraph
+
+class State(TypedDict):
+    x: int
+
+def my_node(state: State) -> State:
+    return {"x": state["x"] + 1}
+
+builder = StateGraph(State)
+
+# Infer node name from function
+builder.add_node(my_node)  # node name will be 'my_node'
+
+# Specify custom node name
+builder.add_node("custom_name", my_node)
+
+builder.add_edge(START, "my_node")
+graph = builder.compile()
+```
+
+### add_edge
+
+```python
+add_edge(start_key: str | list[str], end_key: str) -> Self
+```
+
+Add a directed edge from the start node(s) to the end node.
+
+When a single start node is provided, the graph will wait for that node to complete before executing the end node. When multiple start nodes are provided, the graph will wait for ALL of the start nodes to complete before executing the end node.
+
+#### Parameters
+
+<ParamField path="start_key" type="str | list[str]" required>
+  The key(s) of the start node(s) of the edge.
+</ParamField>
+
+<ParamField path="end_key" type="str" required>
+  The key of the end node of the edge.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="Self">
+  The instance of the StateGraph, allowing for method chaining.
+</ResponseField>
+
+#### Raises
+
+- **ValueError**: If the start key is `END` or if the start/end key is not present in the graph.
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: int
+
+builder = StateGraph(State)
+builder.add_node("node_a", lambda s: {"value": s["value"] + 1})
+builder.add_node("node_b", lambda s: {"value": s["value"] * 2})
+
+# Add edges
+builder.add_edge(START, "node_a")
+builder.add_edge("node_a", "node_b")
+builder.add_edge("node_b", END)
+
+graph = builder.compile()
+```
+
+### add_conditional_edges
+
+```python
+add_conditional_edges(
+    source: str,
+    path: Callable[..., Hashable | Sequence[Hashable]]
+        | Callable[..., Awaitable[Hashable | Sequence[Hashable]]]
+        | Runnable[Any, Hashable | Sequence[Hashable]],
+    path_map: dict[Hashable, str] | list[str] | None = None,
+) -> Self
+```
+
+Add a conditional edge from the starting node to any number of destination nodes.
+
+#### Parameters
+
+<ParamField path="source" type="str" required>
+  The starting node. This conditional edge will run when exiting this node.
+</ParamField>
+
+<ParamField path="path" type="Callable | Runnable" required>
+  The callable that determines the next node or nodes.
+
+  If not specifying `path_map`, it should return one or more node names. If it returns `END`, the graph will stop execution.
+</ParamField>
+
+<ParamField path="path_map" type="dict[Hashable, str] | list[str] | None" default="None">
+  Optional mapping of paths to node names. If omitted, the paths returned by `path` should be node names.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="Self">
+  The instance of the graph, allowing for method chaining.
+</ResponseField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: int
+
+def router(state: State) -> str:
+    if state["value"] > 10:
+        return "high"
+    return "low"
+
+builder = StateGraph(State)
+builder.add_node("high_handler", lambda s: {"value": s["value"] - 5})
+builder.add_node("low_handler", lambda s: {"value": s["value"] + 5})
+builder.add_node("input", lambda s: s)
+
+builder.add_edge(START, "input")
+builder.add_conditional_edges(
+    "input",
+    router,
+    {"high": "high_handler", "low": "low_handler"}
+)
+builder.add_edge("high_handler", END)
+builder.add_edge("low_handler", END)
+
+graph = builder.compile()
+```
+
+### add_sequence
+
+```python
+add_sequence(
+    nodes: Sequence[
+        StateNode[NodeInputT, ContextT]
+        | tuple[str, StateNode[NodeInputT, ContextT]]
+    ],
+) -> Self
+```
+
+Add a sequence of nodes that will be executed in the provided order.
+
+#### Parameters
+
+<ParamField path="nodes" type="Sequence" required>
+  A sequence of `StateNode` (callables that accept a `state` arg) or `(name, StateNode)` tuples.
+
+  If no names are provided, the name will be inferred from the node object. Each node will be executed in the order provided.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="Self">
+  The instance of the StateGraph, allowing for method chaining.
+</ResponseField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: int
+
+def step1(state: State) -> dict:
+    return {"value": state["value"] + 1}
+
+def step2(state: State) -> dict:
+    return {"value": state["value"] * 2}
+
+def step3(state: State) -> dict:
+    return {"value": state["value"] - 3}
+
+builder = StateGraph(State)
+
+# Add nodes in sequence
+builder.add_sequence([step1, step2, step3])
+
+builder.add_edge(START, "step1")
+builder.add_edge("step3", END)
+
+graph = builder.compile()
+result = graph.invoke({"value": 5})
+# {'value': 9}  # ((5 + 1) * 2) - 3
+```
+
+### set_entry_point
+
+```python
+set_entry_point(key: str) -> Self
+```
+
+Specifies the first node to be called in the graph. Equivalent to calling `add_edge(START, key)`.
+
+#### Parameters
+
+<ParamField path="key" type="str" required>
+  The key of the node to set as the entry point.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="Self">
+  The instance of the graph, allowing for method chaining.
+</ResponseField>
+
+### set_conditional_entry_point
+
+```python
+set_conditional_entry_point(
+    path: Callable[..., Hashable | Sequence[Hashable]]
+        | Callable[..., Awaitable[Hashable | Sequence[Hashable]]]
+        | Runnable[Any, Hashable | Sequence[Hashable]],
+    path_map: dict[Hashable, str] | list[str] | None = None,
+) -> Self
+```
+
+Sets a conditional entry point in the graph. Equivalent to calling `add_conditional_edges(START, path, path_map)`.
+
+#### Parameters
+
+<ParamField path="path" type="Callable | Runnable" required>
+  The callable that determines the next node or nodes. If it returns `END`, the graph will stop execution.
+</ParamField>
+
+<ParamField path="path_map" type="dict[Hashable, str] | list[str] | None" default="None">
+  Optional mapping of paths to node names.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="Self">
+  The instance of the graph, allowing for method chaining.
+</ResponseField>
+
+### set_finish_point
+
+```python
+set_finish_point(key: str) -> Self
+```
+
+Marks a node as a finish point of the graph. If the graph reaches this node, it will cease execution. Equivalent to calling `add_edge(key, END)`.
+
+#### Parameters
+
+<ParamField path="key" type="str" required>
+  The key of the node to set as the finish point.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="Self">
+  The instance of the graph, allowing for method chaining.
+</ResponseField>
+
+### compile
+
+```python
+compile(
+    checkpointer: Checkpointer = None,
+    *,
+    cache: BaseCache | None = None,
+    store: BaseStore | None = None,
+    interrupt_before: All | list[str] | None = None,
+    interrupt_after: All | list[str] | None = None,
+    debug: bool = False,
+    name: str | None = None,
+) -> CompiledStateGraph[StateT, ContextT, InputT, OutputT]
+```
+
+Compiles the StateGraph into a CompiledStateGraph object.
+
+The compiled graph implements the `Runnable` interface and can be invoked, streamed, batched, and run asynchronously.
+
+#### Parameters
+
+<ParamField path="checkpointer" type="Checkpointer" default="None">
+  A checkpoint saver object or flag.
+
+  If provided, this `Checkpointer` serves as a fully versioned "short-term memory" for the graph, allowing it to be paused, resumed, and replayed from any point.
+
+  - If `None`, it may inherit the parent graph's checkpointer when used as a subgraph.
+  - If `False`, it will not use or inherit any checkpointer.
+
+  **Important:** When a checkpointer is enabled, you should pass a `thread_id` in the config when invoking the graph.
+</ParamField>
+
+<ParamField path="cache" type="BaseCache | None" default="None">
+  Cache to use for storing node results.
+</ParamField>
+
+<ParamField path="store" type="BaseStore | None" default="None">
+  Memory store to use for SharedValues.
+</ParamField>
+
+<ParamField path="interrupt_before" type="All | list[str] | None" default="None">
+  An optional list of node names to interrupt before. Use `"*"` to interrupt before all nodes.
+</ParamField>
+
+<ParamField path="interrupt_after" type="All | list[str] | None" default="None">
+  An optional list of node names to interrupt after. Use `"*"` to interrupt after all nodes.
+</ParamField>
+
+<ParamField path="debug" type="bool" default="False">
+  A flag indicating whether to enable debug mode.
+</ParamField>
+
+<ParamField path="name" type="str | None" default="None">
+  The name to use for the compiled graph. Defaults to `"LangGraph"`.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="CompiledStateGraph">
+  The compiled StateGraph that can be invoked and streamed.
+</ResponseField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import InMemorySaver
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: int
+
+builder = StateGraph(State)
+builder.add_node("process", lambda s: {"value": s["value"] + 1})
+builder.add_edge(START, "process")
+builder.add_edge("process", END)
+
+# Compile with checkpointer
+checkpointer = InMemorySaver()
+graph = builder.compile(checkpointer=checkpointer)
+
+# Invoke with thread_id
+config = {"configurable": {"thread_id": "my-thread"}}
+result = graph.invoke({"value": 5}, config)
+# {'value': 6}
+```
+
+## CompiledStateGraph
+
+The result of calling `StateGraph.compile()` is a `CompiledStateGraph` instance, which extends `Pregel` and implements the LangChain `Runnable` interface.
+
+**Defined in:** `langgraph/graph/state.py:1180`
+
+### Methods
+
+The `CompiledStateGraph` inherits all methods from `Pregel`, including:
+
+- `invoke()` - Synchronously invoke the graph
+- `ainvoke()` - Asynchronously invoke the graph
+- `stream()` - Synchronously stream graph execution
+- `astream()` - Asynchronously stream graph execution
+- `get_state()` - Get current graph state
+- `update_state()` - Update graph state
+- `get_graph()` - Get graph structure
+
+See the [Pregel reference](/api/pregel) for detailed documentation of these methods.
+
+## Complete Example
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+import operator
+
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import InMemorySaver
+
+# Define the state schema
+class State(TypedDict):
+    messages: Annotated[list[str], operator.add]
+    count: int
+
+# Define nodes
+def process_message(state: State) -> dict:
+    return {
+        "messages": [f"Processed: {state['count']}"],
+        "count": 1
+    }
+
+def summarize(state: State) -> dict:
+    total = state["count"]
+    return {"messages": [f"Total processed: {total}"]}
+
+# Build the graph
+builder = StateGraph(State)
+builder.add_node("process", process_message)
+builder.add_node("summarize", summarize)
+
+builder.add_edge(START, "process")
+builder.add_edge("process", "summarize")
+builder.add_edge("summarize", END)
+
+# Compile and run
+checkpointer = InMemorySaver()
+graph = builder.compile(checkpointer=checkpointer)
+
+config = {"configurable": {"thread_id": "1"}}
+result = graph.invoke(
+    {"messages": ["Start"], "count": 0},
+    config
+)
+
+print(result)
+# {
+#   'messages': ['Start', 'Processed: 0', 'Total processed: 1'],
+#   'count': 1
+# }
+```

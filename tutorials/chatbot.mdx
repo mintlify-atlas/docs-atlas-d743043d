@@ -1,0 +1,307 @@
+---
+title: "Build a Conversational Chatbot"
+description: "Create a chatbot with memory and message handling"
+---
+
+In this tutorial, you'll build a conversational chatbot that maintains chat history and uses LangChain models to generate intelligent responses.
+
+## What you'll build
+
+A chatbot that:
+- Maintains conversation history
+- Integrates with LLM providers
+- Handles multiple turns of conversation
+- Uses message state management
+
+## Prerequisites
+
+Install required packages:
+
+```bash
+pip install -U langgraph langchain-openai langchain-anthropic
+```
+
+Set your API key:
+
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+# OR
+export ANTHROPIC_API_KEY="your-api-key-here"
+```
+
+## Tutorial
+
+<Steps>
+  <Step title="Define the chatbot state">
+    Use LangGraph's message handling to manage conversation history.
+
+    ```python
+    from typing import Annotated, Sequence
+    from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+    from langgraph.graph import StateGraph, START, END, add_messages
+    from typing_extensions import TypedDict
+
+    class ChatbotState(TypedDict):
+        """State for chatbot with message history."""
+        messages: Annotated[Sequence[BaseMessage], add_messages]
+    ```
+
+    The `add_messages` annotation:
+    - Automatically appends new messages
+    - Maintains conversation order
+    - Handles message deduplication
+  </Step>
+
+  <Step title="Create the chatbot node">
+    Build a node that calls an LLM to generate responses.
+
+    ```python
+    from langchain_openai import ChatOpenAI
+    # OR use Anthropic: from langchain_anthropic import ChatAnthropic
+
+    # Initialize the model
+    model = ChatOpenAI(model="gpt-4", temperature=0.7)
+    # OR: model = ChatAnthropic(model="claude-3-5-sonnet-20241022")
+
+    def chatbot_node(state: ChatbotState) -> dict:
+        """Generate a response using the LLM."""
+        messages = state["messages"]
+        
+        # Call the model with conversation history
+        response = model.invoke(messages)
+        
+        # Return the new message to be added to state
+        return {"messages": [response]}
+    ```
+
+    The chatbot node:
+    - Receives all previous messages
+    - Sends them to the LLM
+    - Returns the AI's response
+  </Step>
+
+  <Step title="Build the graph">
+    Create a simple graph with the chatbot node.
+
+    ```python
+    # Initialize graph
+    graph = StateGraph(ChatbotState)
+
+    # Add the chatbot node
+    graph.add_node("chatbot", chatbot_node)
+
+    # Define flow: START -> chatbot -> END
+    graph.add_edge(START, "chatbot")
+    graph.add_edge("chatbot", END)
+
+    # Compile the graph
+    app = graph.compile()
+    ```
+  </Step>
+
+  <Step title="Have a conversation">
+    Run the chatbot with multiple conversation turns.
+
+    ```python
+    # First message
+    result = app.invoke({
+        "messages": [HumanMessage(content="Hi! I'm learning about LangGraph.")]
+    })
+    print(result["messages"][-1].content)
+    # AI: "That's great! LangGraph is a powerful framework for building..."
+
+    # Continue the conversation
+    result = app.invoke({
+        "messages": [
+            HumanMessage(content="Hi! I'm learning about LangGraph."),
+            result["messages"][-1],
+            HumanMessage(content="What are the key concepts?")
+        ]
+    })
+    print(result["messages"][-1].content)
+    # AI: "The key concepts in LangGraph are: 1. State - holds your data..."
+    ```
+
+    Each call:
+    - Includes full conversation history
+    - Maintains context
+    - Generates contextual responses
+  </Step>
+
+  <Step title="Add conversation loop">
+    Create an interactive chat experience.
+
+    ```python
+    def chat():
+        """Interactive chat loop."""
+        print("Chatbot ready! Type 'quit' to exit.\n")
+        
+        messages = []
+        
+        while True:
+            # Get user input
+            user_input = input("You: ")
+            if user_input.lower() in ["quit", "exit", "q"]:
+                print("Goodbye!")
+                break
+            
+            # Add user message
+            messages.append(HumanMessage(content=user_input))
+            
+            # Get bot response
+            result = app.invoke({"messages": messages})
+            
+            # Extract and display response
+            bot_message = result["messages"][-1]
+            messages = result["messages"]
+            
+            print(f"Bot: {bot_message.content}\n")
+
+    # Run the chat
+    chat()
+    ```
+  </Step>
+
+  <Step title="Complete example">
+    Here's the full working chatbot:
+
+    ```python
+    from typing import Annotated, Sequence
+    from langchain_core.messages import BaseMessage, HumanMessage
+    from langchain_openai import ChatOpenAI
+    from langgraph.graph import StateGraph, START, END, add_messages
+    from typing_extensions import TypedDict
+
+    # Define state
+    class ChatbotState(TypedDict):
+        messages: Annotated[Sequence[BaseMessage], add_messages]
+
+    # Initialize model
+    model = ChatOpenAI(model="gpt-4", temperature=0.7)
+
+    # Define chatbot node
+    def chatbot_node(state: ChatbotState) -> dict:
+        messages = state["messages"]
+        response = model.invoke(messages)
+        return {"messages": [response]}
+
+    # Build graph
+    graph = StateGraph(ChatbotState)
+    graph.add_node("chatbot", chatbot_node)
+    graph.add_edge(START, "chatbot")
+    graph.add_edge("chatbot", END)
+    app = graph.compile()
+
+    # Interactive chat
+    def chat():
+        print("Chatbot ready! Type 'quit' to exit.\n")
+        messages = []
+        
+        while True:
+            user_input = input("You: ")
+            if user_input.lower() in ["quit", "exit", "q"]:
+                print("Goodbye!")
+                break
+            
+            messages.append(HumanMessage(content=user_input))
+            result = app.invoke({"messages": messages})
+            bot_message = result["messages"][-1]
+            messages = result["messages"]
+            print(f"Bot: {bot_message.content}\n")
+
+    if __name__ == "__main__":
+        chat()
+    ```
+
+    Save as `chatbot.py` and run:
+
+    ```bash
+    python chatbot.py
+    ```
+  </Step>
+</Steps>
+
+## Expected output
+
+When you run the chatbot:
+
+```
+Chatbot ready! Type 'quit' to exit.
+
+You: What is LangGraph?
+Bot: LangGraph is a framework for building stateful, multi-actor applications with LLMs...
+
+You: Can you give me an example?
+Bot: Sure! Here's a simple example of building an agent with LangGraph...
+
+You: quit
+Goodbye!
+```
+
+## Key concepts
+
+- **Message History**: `add_messages` automatically manages conversation history
+- **BaseMessage Types**: `HumanMessage`, `AIMessage`, `SystemMessage`
+- **State Updates**: Each node can append messages to the conversation
+- **Model Integration**: Easy integration with LangChain model providers
+
+## Enhancements
+
+<AccordionGroup>
+  <Accordion title="Add system prompts">
+    ```python
+    from langchain_core.messages import SystemMessage
+
+    def chatbot_node(state: ChatbotState) -> dict:
+        messages = state["messages"]
+        
+        # Add system prompt
+        full_messages = [
+            SystemMessage(content="You are a helpful AI assistant specializing in LangGraph."),
+            *messages
+        ]
+        
+        response = model.invoke(full_messages)
+        return {"messages": [response]}
+    ```
+  </Accordion>
+
+  <Accordion title="Add message persistence">
+    ```python
+    from langgraph.checkpoint.memory import MemorySaver
+
+    # Add checkpointer for persistence
+    memory = MemorySaver()
+    app = graph.compile(checkpointer=memory)
+
+    # Use with thread_id for multiple conversations
+    config = {"configurable": {"thread_id": "conversation-1"}}
+    result = app.invoke({"messages": [HumanMessage(content="Hello")]}, config)
+    ```
+  </Accordion>
+
+  <Accordion title="Add streaming responses">
+    ```python
+    # Stream responses token by token
+    for chunk in app.stream({"messages": [HumanMessage(content="Tell me a story")]}):
+        if "chatbot" in chunk:
+            print(chunk["chatbot"]["messages"][-1].content, end="", flush=True)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Add Tools" icon="wrench" href="/tutorials/tool-calling">
+    Give your chatbot the ability to use tools
+  </Card>
+  
+  <Card title="ReAct Agent" icon="brain" href="/tutorials/react-agent">
+    Build a reasoning and acting agent
+  </Card>
+</CardGroup>
+
+<Note>
+  This chatbot forms the foundation for more advanced agents. The next tutorials will add tool calling and reasoning capabilities.
+</Note>

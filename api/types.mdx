@@ -1,0 +1,578 @@
+---
+title: Types
+description: Core types and primitives for LangGraph
+---
+
+This page documents the core types and primitives used throughout LangGraph for building stateful, multi-actor applications.
+
+## Send
+
+<ParamField path="Send" type="class">
+  A message or packet to send to a specific node in the graph.
+
+  The `Send` class is used within a `StateGraph`'s conditional edges to dynamically invoke a node with a custom state at the next step. Importantly, the sent state can differ from the core graph's state, allowing for flexible and dynamic workflow management.
+
+  One common use case is a "map-reduce" workflow where your graph invokes the same node multiple times in parallel with different states, before aggregating the results back into the main graph's state.
+
+  **Defined in:** `langgraph/types.py:289`
+</ParamField>
+
+### Attributes
+
+<ParamField path="node" type="str">
+  The name of the target node to send the message to.
+</ParamField>
+
+<ParamField path="arg" type="Any">
+  The state or message to send to the target node.
+</ParamField>
+
+### Methods
+
+<ParamField path="__init__(node, arg)" type="method">
+  Initialize a new instance of the `Send` class.
+
+  **Parameters:**
+  - `node` (str): The name of the target node to send the message to.
+  - `arg` (Any): The state or message to send to the target node.
+</ParamField>
+
+### Usage Example
+
+```python
+from typing import Annotated
+from langgraph.types import Send
+from langgraph.graph import END, START
+from langgraph.graph import StateGraph
+import operator
+
+class OverallState(TypedDict):
+    subjects: list[str]
+    jokes: Annotated[list[str], operator.add]
+
+def continue_to_jokes(state: OverallState):
+    # Send multiple messages to invoke the node in parallel
+    return [Send("generate_joke", {"subject": s}) for s in state["subjects"]]
+
+builder = StateGraph(OverallState)
+builder.add_node(
+    "generate_joke",
+    lambda state: {"jokes": [f"Joke about {state['subject']}"]}
+)
+builder.add_conditional_edges(START, continue_to_jokes)
+builder.add_edge("generate_joke", END)
+graph = builder.compile()
+
+# Invoking with two subjects results in a generated joke for each
+graph.invoke({"subjects": ["cats", "dogs"]})
+# {'subjects': ['cats', 'dogs'], 'jokes': ['Joke about cats', 'Joke about dogs']}
+```
+
+## Command
+
+<ParamField path="Command" type="class">
+  One or more commands to update the graph's state and send messages to nodes.
+
+  The `Command` primitive enables dynamic control flow by allowing nodes to:
+  - Update the graph's state
+  - Resume from interrupts
+  - Navigate to specific nodes
+  - Send messages to nodes with custom inputs
+
+  **Added in:** v0.2.24  
+  **Defined in:** `langgraph/types.py:368`
+</ParamField>
+
+### Attributes
+
+<ParamField path="graph" type="str | None" default="None">
+  Graph to send the command to. Supported values:
+  - `None`: the current graph
+  - `Command.PARENT`: closest parent graph
+</ParamField>
+
+<ParamField path="update" type="Any | None" default="None">
+  Update to apply to the graph's state.
+</ParamField>
+
+<ParamField path="resume" type="dict[str, Any] | Any | None" default="None">
+  Value to resume execution with. To be used together with [`interrupt()`](#interrupt). Can be:
+  - Mapping of interrupt ids to resume values
+  - A single value with which to resume the next interrupt
+</ParamField>
+
+<ParamField path="goto" type="Send | Sequence[Send | N] | N" default="()">
+  Can be one of the following:
+  - Name of the node to navigate to next (any node that belongs to the specified `graph`)
+  - Sequence of node names to navigate to next
+  - `Send` object (to execute a node with the input provided)
+  - Sequence of `Send` objects
+</ParamField>
+
+### Class Variables
+
+<ParamField path="PARENT" type="Literal['__parent__']">
+  Special constant to target the parent graph in a command.
+</ParamField>
+
+### Usage Example
+
+```python
+from langgraph.types import Command
+from langgraph.graph import StateGraph, START
+
+class State(TypedDict):
+    foo: str
+
+def my_node(state: State):
+    # Update state and navigate to a specific node
+    return Command(
+        update={"foo": "bar"},
+        goto="next_node"
+    )
+
+def next_node(state: State):
+    return {"foo": state["foo"] + "_processed"}
+
+builder = StateGraph(State)
+builder.add_node("my_node", my_node)
+builder.add_node("next_node", next_node)
+builder.add_edge(START, "my_node")
+graph = builder.compile()
+
+result = graph.invoke({"foo": "initial"})
+print(result)  # {"foo": "bar_processed"}
+```
+
+## interrupt
+
+<ParamField path="interrupt(value)" type="function">
+  Interrupt the graph with a resumable exception from within a node.
+
+  The `interrupt` function enables human-in-the-loop workflows by pausing graph execution and surfacing a value to the client. This value can communicate context or request input required to resume execution.
+
+  **Important:** You must enable a checkpointer for interrupts to work, as the feature relies on persisting the graph state.
+
+  **Defined in:** `langgraph/types.py:420`
+</ParamField>
+
+### Parameters
+
+<ParamField path="value" type="Any">
+  The value to surface to the client when the graph is interrupted.
+</ParamField>
+
+### Returns
+
+<ParamField path="return" type="Any">
+  On subsequent invocations within the same node (same task to be precise), returns the value provided during the first invocation.
+</ParamField>
+
+### Raises
+
+<ParamField path="GraphInterrupt" type="exception">
+  On the first invocation within the node, halts execution and surfaces the provided value to the client.
+</ParamField>
+
+### How It Works
+
+1. **First invocation:** Raises a `GraphInterrupt` exception, halting execution. The provided `value` is sent to the client.
+2. **Resuming:** A client must use the [`Command`](#command) primitive with a `resume` value to continue execution.
+3. **Re-execution:** The graph resumes from the start of the node, re-executing all logic.
+4. **Multiple interrupts:** If a node contains multiple `interrupt` calls, LangGraph matches resume values to interrupts based on their order in the node.
+
+### Usage Example
+
+```python
+import uuid
+from typing import Optional
+from typing_extensions import TypedDict
+
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.constants import START
+from langgraph.graph import StateGraph
+from langgraph.types import interrupt, Command
+
+
+class State(TypedDict):
+    """The graph state."""
+    foo: str
+    human_value: Optional[str]
+    """Human value will be updated using an interrupt."""
+
+
+def node(state: State):
+    answer = interrupt(
+        # This value will be sent to the client
+        # as part of the interrupt information.
+        "what is your age?"
+    )
+    print(f"> Received an input from the interrupt: {answer}")
+    return {"human_value": answer}
+
+
+builder = StateGraph(State)
+builder.add_node("node", node)
+builder.add_edge(START, "node")
+
+# A checkpointer must be enabled for interrupts to work!
+checkpointer = InMemorySaver()
+graph = builder.compile(checkpointer=checkpointer)
+
+config = {
+    "configurable": {
+        "thread_id": uuid.uuid4(),
+    }
+}
+
+for chunk in graph.stream({"foo": "abc"}, config):
+    print(chunk)
+# > {'__interrupt__': (Interrupt(value='what is your age?', id='45fda8478b2ef754419799e10992af06'),)}
+
+command = Command(resume="some input from a human!!!")
+
+for chunk in graph.stream(command, config):
+    print(chunk)
+# > Received an input from the interrupt: some input from a human!!!
+# > {'node': {'human_value': 'some input from a human!!!'}}
+```
+
+## Interrupt
+
+<ParamField path="Interrupt" type="dataclass">
+  Information about an interrupt that occurred in a node.
+
+  **Added in:** v0.2.24  
+  **Changed in:** v0.4.0 (added `id` property)  
+  **Changed in:** v0.6.0 (removed `ns`, `when`, `resumable`, `interrupt_id`)  
+  **Defined in:** `langgraph/types.py:161`
+</ParamField>
+
+### Attributes
+
+<ParamField path="value" type="Any">
+  The value associated with the interrupt.
+</ParamField>
+
+<ParamField path="id" type="str">
+  The ID of the interrupt. Can be used to resume the interrupt directly.
+</ParamField>
+
+### Methods
+
+<ParamField path="from_ns(value, ns)" type="classmethod">
+  Create an `Interrupt` from a namespace string.
+
+  **Parameters:**
+  - `value` (Any): The interrupt value
+  - `ns` (str): Namespace string
+
+  **Returns:** `Interrupt`
+</ParamField>
+
+## RetryPolicy
+
+<ParamField path="RetryPolicy" type="NamedTuple">
+  Configuration for retrying nodes.
+
+  **Added in:** v0.2.24  
+  **Defined in:** `langgraph/types.py:119`
+</ParamField>
+
+### Attributes
+
+<ParamField path="initial_interval" type="float" default="0.5">
+  Amount of time that must elapse before the first retry occurs. In seconds.
+</ParamField>
+
+<ParamField path="backoff_factor" type="float" default="2.0">
+  Multiplier by which the interval increases after each retry.
+</ParamField>
+
+<ParamField path="max_interval" type="float" default="128.0">
+  Maximum amount of time that may elapse between retries. In seconds.
+</ParamField>
+
+<ParamField path="max_attempts" type="int" default="3">
+  Maximum number of attempts to make before giving up, including the first.
+</ParamField>
+
+<ParamField path="jitter" type="bool" default="True">
+  Whether to add random jitter to the interval between retries.
+</ParamField>
+
+<ParamField path="retry_on" type="type[Exception] | Sequence[type[Exception]] | Callable[[Exception], bool]">
+  List of exception classes that should trigger a retry, or a callable that returns `True` for exceptions that should trigger a retry.
+</ParamField>
+
+### Usage Example
+
+```python
+from langgraph.types import RetryPolicy
+from langgraph.graph import StateGraph
+
+class State(TypedDict):
+    value: int
+
+def unreliable_node(state: State):
+    # This might fail occasionally
+    if random.random() < 0.5:
+        raise ValueError("Random failure")
+    return {"value": state["value"] + 1}
+
+builder = StateGraph(State)
+builder.add_node(
+    "unreliable",
+    unreliable_node,
+    retry=RetryPolicy(
+        initial_interval=1.0,
+        max_attempts=5,
+        backoff_factor=2.0,
+        retry_on=ValueError
+    )
+)
+```
+
+## CachePolicy
+
+<ParamField path="CachePolicy" type="dataclass">
+  Configuration for caching nodes.
+
+  **Defined in:** `langgraph/types.py:145`
+</ParamField>
+
+### Attributes
+
+<ParamField path="key_func" type="Callable[..., str | bytes]">
+  Function to generate a cache key from the node's input. Defaults to hashing the input with pickle.
+</ParamField>
+
+<ParamField path="ttl" type="int | None" default="None">
+  Time to live for the cache entry in seconds. If `None`, the entry never expires.
+</ParamField>
+
+### Usage Example
+
+```python
+from langgraph.types import CachePolicy
+from langgraph.graph import StateGraph
+
+def expensive_computation(state: State):
+    # This is an expensive operation that we want to cache
+    time.sleep(5)
+    return {"result": state["input"] * 2}
+
+builder = StateGraph(State)
+builder.add_node(
+    "expensive",
+    expensive_computation,
+    cache=CachePolicy(
+        ttl=3600  # Cache for 1 hour
+    )
+)
+```
+
+## Overwrite
+
+<ParamField path="Overwrite" type="dataclass">
+  Bypass a reducer and write the wrapped value directly to a `BinaryOperatorAggregate` channel.
+
+  Receiving multiple `Overwrite` values for the same channel in a single super-step will raise an `InvalidUpdateError`.
+
+  **Defined in:** `langgraph/types.py:547`
+</ParamField>
+
+### Attributes
+
+<ParamField path="value" type="Any">
+  The value to write directly to the channel, bypassing any reducer.
+</ParamField>
+
+### Usage Example
+
+```python
+from typing import Annotated
+import operator
+from langgraph.graph import StateGraph
+from langgraph.types import Overwrite
+
+class State(TypedDict):
+    messages: Annotated[list, operator.add]
+
+def node_a(state: State):
+    # Normal update: uses the reducer (operator.add)
+    return {"messages": ["a"]}
+
+def node_b(state: State):
+    # Overwrite: bypasses the reducer and replaces the entire value
+    return {"messages": Overwrite(value=["b"])}
+
+builder = StateGraph(State)
+builder.add_node("node_a", node_a)
+builder.add_node("node_b", node_b)
+builder.set_entry_point("node_a")
+builder.add_edge("node_a", "node_b")
+graph = builder.compile()
+
+# Without Overwrite in node_b, messages would be ["START", "a", "b"]
+# With Overwrite, messages is just ["b"]
+result = graph.invoke({"messages": ["START"]})
+assert result == {"messages": ["b"]}
+```
+
+## StateSnapshot
+
+<ParamField path="StateSnapshot" type="NamedTuple">
+  Snapshot of the state of the graph at the beginning of a step.
+
+  **Defined in:** `langgraph/types.py:268`
+</ParamField>
+
+### Attributes
+
+<ParamField path="values" type="dict[str, Any] | Any">
+  Current values of channels.
+</ParamField>
+
+<ParamField path="next" type="tuple[str, ...]">
+  The name of the node to execute in each task for this step.
+</ParamField>
+
+<ParamField path="config" type="RunnableConfig">
+  Config used to fetch this snapshot.
+</ParamField>
+
+<ParamField path="metadata" type="CheckpointMetadata | None">
+  Metadata associated with this snapshot.
+</ParamField>
+
+<ParamField path="created_at" type="str | None">
+  Timestamp of snapshot creation.
+</ParamField>
+
+<ParamField path="parent_config" type="RunnableConfig | None">
+  Config used to fetch the parent snapshot, if any.
+</ParamField>
+
+<ParamField path="tasks" type="tuple[PregelTask, ...]">
+  Tasks to execute in this step. If already attempted, may contain an error.
+</ParamField>
+
+<ParamField path="interrupts" type="tuple[Interrupt, ...]">
+  Interrupts that occurred in this step that are pending resolution.
+</ParamField>
+
+## PregelTask
+
+<ParamField path="PregelTask" type="NamedTuple">
+  A Pregel task.
+
+  **Defined in:** `langgraph/types.py:223`
+</ParamField>
+
+### Attributes
+
+<ParamField path="id" type="str">
+  Unique identifier for the task.
+</ParamField>
+
+<ParamField path="name" type="str">
+  Name of the node this task executes.
+</ParamField>
+
+<ParamField path="path" type="tuple[str | int | tuple, ...]">
+  Path to this task in the execution tree.
+</ParamField>
+
+<ParamField path="error" type="Exception | None" default="None">
+  Error that occurred during task execution, if any.
+</ParamField>
+
+<ParamField path="interrupts" type="tuple[Interrupt, ...]" default="()">
+  Interrupts that occurred during task execution.
+</ParamField>
+
+<ParamField path="state" type="None | RunnableConfig | StateSnapshot" default="None">
+  State snapshot for this task.
+</ParamField>
+
+<ParamField path="result" type="Any | None" default="None">
+  Result of the task execution, if completed.
+</ParamField>
+
+## Type Aliases
+
+### Durability
+
+<ParamField path="Durability" type="Literal['sync', 'async', 'exit']">
+  Durability mode for the graph execution.
+
+  - `'sync'`: Changes are persisted synchronously before the next step starts.
+  - `'async'`: Changes are persisted asynchronously while the next step executes.
+  - `'exit'`: Changes are persisted only when the graph exits.
+
+  **Defined in:** `langgraph/types.py:62`
+</ParamField>
+
+### All
+
+<ParamField path="All" type="Literal['*']">
+  Special value to indicate that graph should interrupt on all nodes.
+
+  **Defined in:** `langgraph/types.py:70`
+</ParamField>
+
+### Checkpointer
+
+<ParamField path="Checkpointer" type="None | bool | BaseCheckpointSaver">
+  Type of the checkpointer to use for a subgraph.
+
+  - `True` enables persistent checkpointing for this subgraph.
+  - `False` disables checkpointing, even if the parent graph has a checkpointer.
+  - `None` inherits checkpointer from the parent graph.
+
+  **Defined in:** `langgraph/types.py:73`
+</ParamField>
+
+### StreamMode
+
+<ParamField path="StreamMode" type="Literal['values', 'updates', 'checkpoints', 'tasks', 'debug', 'messages', 'custom']">
+  How the stream method should emit outputs.
+
+  - `"values"`: Emit all values in the state after each step, including interrupts. When used with functional API, values are emitted once at the end of the workflow.
+  - `"updates"`: Emit only the node or task names and updates returned by the nodes or tasks after each step. If multiple updates are made in the same step (e.g. multiple nodes are run) then those updates are emitted separately.
+  - `"custom"`: Emit custom data using from inside nodes or tasks using `StreamWriter`.
+  - `"messages"`: Emit LLM messages token-by-token together with metadata for any LLM invocations inside nodes or tasks.
+  - `"checkpoints"`: Emit an event when a checkpoint is created, in the same format as returned by `get_state()`.
+  - `"tasks"`: Emit events when tasks start and finish, including their results and errors.
+  - `"debug"`: Emit `"checkpoints"` and `"tasks"` events for debugging purposes.
+
+  **Defined in:** `langgraph/types.py:95`
+</ParamField>
+
+### StreamWriter
+
+<ParamField path="StreamWriter" type="Callable[[Any], None]">
+  `Callable` that accepts a single argument and writes it to the output stream.
+  
+  Always injected into nodes if requested as a keyword argument, but it's a no-op when not using `stream_mode="custom"`.
+
+  **Defined in:** `langgraph/types.py:111`
+</ParamField>
+
+## Utilities
+
+### ensure_valid_checkpointer
+
+<ParamField path="ensure_valid_checkpointer(checkpointer)" type="function">
+  Validate that a checkpointer value is valid.
+
+  **Parameters:**
+  - `checkpointer` (Checkpointer): The checkpointer to validate
+
+  **Returns:** `Checkpointer` - The validated checkpointer
+
+  **Raises:** `TypeError` if the checkpointer is invalid
+
+  **Defined in:** `langgraph/types.py:82`
+</ParamField>

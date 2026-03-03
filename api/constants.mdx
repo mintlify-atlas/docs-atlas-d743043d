@@ -1,0 +1,313 @@
+---
+title: Constants
+description: Core constants and reserved identifiers in LangGraph
+---
+
+LangGraph defines several constants that are used throughout the framework for graph control flow, node identification, and configuration.
+
+**Defined in:** `langgraph/constants.py`
+
+## Graph Control Flow
+
+### START
+
+<ParamField path="START" type="str">
+  The first (virtual) node in graph-style Pregel.
+
+  Use this constant to add edges from the graph entry point to your first node(s). The actual value is the interned string `"__start__"`.
+
+  **Defined in:** `langgraph/constants.py:30`
+</ParamField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: int
+
+builder = StateGraph(State)
+builder.add_node("process", lambda state: {"value": state["value"] * 2})
+
+# Add edge from START to the first node
+builder.add_edge(START, "process")
+builder.add_edge("process", END)
+
+graph = builder.compile()
+result = graph.invoke({"value": 5})
+# {'value': 10}
+```
+
+### END
+
+<ParamField path="END" type="str">
+  The last (virtual) node in graph-style Pregel.
+
+  Use this constant to mark terminal nodes in your graph. When execution reaches a node with an edge to `END`, the graph will cease execution. The actual value is the interned string `"__end__"`.
+
+  **Defined in:** `langgraph/constants.py:28`
+</ParamField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    done: bool
+    value: int
+
+def process(state: State):
+    return {"value": state["value"] + 1, "done": True}
+
+builder = StateGraph(State)
+builder.add_node("process", process)
+builder.add_edge(START, "process")
+
+# Mark process as a terminal node
+builder.add_edge("process", END)
+
+graph = builder.compile()
+result = graph.invoke({"value": 0, "done": False})
+# {'value': 1, 'done': True}
+```
+
+#### Conditional Routing to END
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    count: int
+
+def router(state: State) -> str:
+    if state["count"] >= 10:
+        return "done"
+    return "continue"
+
+builder = StateGraph(State)
+builder.add_node("increment", lambda s: {"count": s["count"] + 1})
+
+builder.add_edge(START, "increment")
+builder.add_conditional_edges(
+    "increment",
+    router,
+    {"continue": "increment", "done": END}
+)
+
+graph = builder.compile()
+result = graph.invoke({"count": 0})
+# {'count': 10}
+```
+
+## Streaming and Tracing Tags
+
+### TAG_HIDDEN
+
+<ParamField path="TAG_HIDDEN" type="str">
+  Tag to hide a node/edge from certain tracing/streaming environments.
+
+  When applied to a node, it will not appear in tracing outputs or certain streaming modes. The actual value is the interned string `"langsmith:hidden"`.
+
+  **Defined in:** `langgraph/constants.py:26`
+</ParamField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.constants import TAG_HIDDEN
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: str
+
+# Internal processing node that shouldn't appear in traces
+def internal_process(state: State):
+    # Some internal logic
+    return {"value": state["value"].upper()}
+
+builder = StateGraph(State)
+builder.add_node(
+    "internal",
+    internal_process,
+    metadata={"tags": [TAG_HIDDEN]}
+)
+builder.add_node("output", lambda s: s)
+
+builder.add_edge(START, "internal")
+builder.add_edge("internal", "output")
+builder.add_edge("output", END)
+
+graph = builder.compile()
+# The "internal" node will be hidden from LangSmith traces
+```
+
+### TAG_NOSTREAM
+
+<ParamField path="TAG_NOSTREAM" type="str">
+  Tag to disable streaming for a chat model.
+
+  When applied to a chat model invocation, it will not stream tokens even if streaming is enabled. The actual value is the interned string `"nostream"`.
+
+  **Defined in:** `langgraph/constants.py:24`
+</ParamField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.constants import TAG_NOSTREAM
+from langchain_openai import ChatOpenAI
+from typing_extensions import TypedDict
+from langchain_core.messages import HumanMessage
+
+class State(TypedDict):
+    messages: list
+
+# Model that shouldn't stream even in stream mode
+model_no_stream = ChatOpenAI().with_config(tags=[TAG_NOSTREAM])
+
+def call_model(state: State):
+    response = model_no_stream.invoke(state["messages"])
+    return {"messages": [response]}
+
+builder = StateGraph(State)
+builder.add_node("model", call_model)
+builder.add_edge(START, "model")
+builder.add_edge("model", END)
+
+graph = builder.compile()
+
+# Even when streaming, this model won't emit tokens
+for chunk in graph.stream(
+    {"messages": [HumanMessage(content="Hello")]},
+    stream_mode="messages"
+):
+    print(chunk)
+```
+
+## Import Paths
+
+```python
+# Import from constants module
+from langgraph.constants import START, END, TAG_HIDDEN, TAG_NOSTREAM
+
+# Import from graph module (convenience)
+from langgraph.graph import START, END
+```
+
+## Reserved Constants (Deprecated)
+
+The following constants are retained for backwards compatibility but should not be used directly:
+
+- `CONF` - Internal configuration key (use context_schema instead)
+- `TASKS` - Internal tasks tracking (managed automatically)
+- `CONFIG_KEY_CHECKPOINTER` - Internal checkpointer key (managed automatically)
+
+<Warning>
+  These internal constants are deprecated and may be removed in future versions. The LangGraph team maintains these for backwards compatibility with existing code, particularly in `langgraph-api`. If you're using any of these constants, please contact the LangGraph team or file an issue.
+</Warning>
+
+## Usage Patterns
+
+### Basic Linear Graph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: int
+
+builder = StateGraph(State)
+builder.add_node("step1", lambda s: {"value": s["value"] + 1})
+builder.add_node("step2", lambda s: {"value": s["value"] * 2})
+
+# Use START and END for control flow
+builder.add_edge(START, "step1")
+builder.add_edge("step1", "step2")
+builder.add_edge("step2", END)
+
+graph = builder.compile()
+```
+
+### Conditional Routing
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: int
+    path: str
+
+def router(state: State) -> str:
+    # Route to END if value exceeds threshold
+    if state["value"] > 100:
+        return "end"
+    return state["path"]
+
+builder = StateGraph(State)
+builder.add_node("process_a", lambda s: {"value": s["value"] * 2})
+builder.add_node("process_b", lambda s: {"value": s["value"] + 10})
+
+builder.add_edge(START, "process_a")
+builder.add_conditional_edges(
+    "process_a",
+    router,
+    {
+        "process_a": "process_a",  # Loop back
+        "process_b": "process_b",
+        "end": END
+    }
+)
+builder.add_edge("process_b", END)
+
+graph = builder.compile()
+```
+
+### Multiple Entry Points
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    mode: str
+    value: int
+
+def entry_router(state: State) -> str:
+    return state["mode"]
+
+builder = StateGraph(State)
+builder.add_node("mode_a", lambda s: {"value": s["value"] + 1})
+builder.add_node("mode_b", lambda s: {"value": s["value"] * 2})
+
+# Conditional entry point based on mode
+builder.add_conditional_edges(
+    START,
+    entry_router,
+    {"a": "mode_a", "b": "mode_b"}
+)
+builder.add_edge("mode_a", END)
+builder.add_edge("mode_b", END)
+
+graph = builder.compile()
+
+result_a = graph.invoke({"mode": "a", "value": 5})
+# {'mode': 'a', 'value': 6}
+
+result_b = graph.invoke({"mode": "b", "value": 5})
+# {'mode': 'b', 'value': 10}
+```
+
+## See Also
+
+- [StateGraph](/api/state-graph) - Building graphs with START and END
+- [Graph Module](/api/graph) - Core graph exports
+- [Types](/api/types) - Other core types and primitives

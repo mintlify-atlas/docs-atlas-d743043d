@@ -1,0 +1,397 @@
+---
+title: "Agents with Tool Calling"
+description: "Build agents that can use external tools and APIs"
+---
+
+In this tutorial, you'll build an agent that can call external tools to accomplish tasks, extending the chatbot with real-world capabilities.
+
+## What you'll build
+
+An agent that:
+- Decides when to use tools
+- Calls multiple tools as needed
+- Processes tool results
+- Provides informed responses
+
+## Prerequisites
+
+Install required packages:
+
+```bash
+pip install -U langgraph langchain-openai langchain-community tavily-python
+```
+
+Set your API keys:
+
+```bash
+export OPENAI_API_KEY="your-openai-key"
+export TAVILY_API_KEY="your-tavily-key"  # Get free key at tavily.com
+```
+
+## Tutorial
+
+<Steps>
+  <Step title="Define state and tools">
+    Create the agent state and define tools for the agent to use.
+
+    ```python
+    from typing import Annotated, Sequence
+    from langchain_core.messages import BaseMessage
+    from langchain_core.tools import tool
+    from langgraph.graph import StateGraph, START, END, add_messages
+    from typing_extensions import TypedDict
+
+    # Define state
+    class AgentState(TypedDict):
+        messages: Annotated[Sequence[BaseMessage], add_messages]
+
+    # Define tools
+    @tool
+    def search_web(query: str) -> str:
+        """Search the web for current information.
+        
+        Args:
+            query: The search query
+            
+        Returns:
+            Search results as a string
+        """
+        from langchain_community.tools.tavily_search import TavilySearchResults
+        search = TavilySearchResults(max_results=2)
+        results = search.invoke(query)
+        return str(results)
+
+    @tool
+    def calculate(expression: str) -> str:
+        """Calculate a mathematical expression.
+        
+        Args:
+            expression: A Python expression to evaluate (e.g., "2 + 2" or "10 * 5")
+            
+        Returns:
+            The result of the calculation
+        """
+        try:
+            result = eval(expression)
+            return str(result)
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    @tool
+    def get_weather(location: str) -> str:
+        """Get current weather for a location.
+        
+        Args:
+            location: City name or location
+            
+        Returns:
+            Weather information
+        """
+        # Mock implementation - replace with real API
+        return f"The weather in {location} is sunny, 72°F"
+
+    tools = [search_web, calculate, get_weather]
+    ```
+  </Step>
+
+  <Step title="Create the agent node">
+    Build the agent that decides which tools to call.
+
+    ```python
+    from langchain_openai import ChatOpenAI
+
+    # Initialize model with tools
+    model = ChatOpenAI(model="gpt-4", temperature=0)
+    model_with_tools = model.bind_tools(tools)
+
+    def agent_node(state: AgentState) -> dict:
+        """Agent that can call tools."""
+        messages = state["messages"]
+        response = model_with_tools.invoke(messages)
+        return {"messages": [response]}
+    ```
+
+    The agent:
+    - Receives conversation history
+    - Decides if tools are needed
+    - Returns either a tool call or final answer
+  </Step>
+
+  <Step title="Create the tool execution node">
+    Build a node that executes tool calls.
+
+    ```python
+    from langgraph.prebuilt import ToolNode
+
+    # Create tool execution node
+    tool_node = ToolNode(tools)
+    ```
+
+    The ToolNode:
+    - Automatically executes tool calls
+    - Handles multiple tools
+    - Returns results as messages
+  </Step>
+
+  <Step title="Add routing logic">
+    Create a function to decide whether to call tools or finish.
+
+    ```python
+    def should_continue(state: AgentState) -> str:
+        """Determine whether to call tools or end."""
+        messages = state["messages"]
+        last_message = messages[-1]
+        
+        # If the LLM makes a tool call, route to tools
+        if last_message.tool_calls:
+            return "tools"
+        
+        # Otherwise, end the conversation
+        return "end"
+    ```
+
+    This router:
+    - Checks for tool calls in the last message
+    - Routes to tool execution or completion
+  </Step>
+
+  <Step title="Build the graph">
+    Assemble the agent with conditional routing.
+
+    ```python
+    # Initialize graph
+    graph = StateGraph(AgentState)
+
+    # Add nodes
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", tool_node)
+
+    # Add edges
+    graph.add_edge(START, "agent")
+    
+    # Add conditional routing
+    graph.add_conditional_edges(
+        "agent",
+        should_continue,
+        {
+            "tools": "tools",
+            "end": END
+        }
+    )
+    
+    # After tools, return to agent
+    graph.add_edge("tools", "agent")
+
+    # Compile
+    app = graph.compile()
+    ```
+
+    The flow:
+    1. START → agent
+    2. agent → tools (if tool calls) OR END (if done)
+    3. tools → agent (for next decision)
+  </Step>
+
+  <Step title="Run the agent">
+    Test the agent with different queries.
+
+    ```python
+    from langchain_core.messages import HumanMessage
+
+    # Test calculation
+    result = app.invoke({
+        "messages": [HumanMessage(content="What is 25 * 17?")]
+    })
+    print(result["messages"][-1].content)
+    # "25 * 17 equals 425."
+
+    # Test web search
+    result = app.invoke({
+        "messages": [HumanMessage(content="What are the latest news about AI?")]
+    })
+    print(result["messages"][-1].content)
+    # "Here are the latest AI news: [search results]..."
+
+    # Test weather
+    result = app.invoke({
+        "messages": [HumanMessage(content="What's the weather in San Francisco?")]
+    })
+    print(result["messages"][-1].content)
+    # "The weather in San Francisco is sunny, 72°F."
+
+    # Test multiple tools
+    result = app.invoke({
+        "messages": [HumanMessage(
+            content="Search for the population of Tokyo and calculate 10% of it"
+        )]
+    })
+    print(result["messages"][-1].content)
+    # Agent will use search_web, then calculate, then provide answer
+    ```
+  </Step>
+
+  <Step title="Complete example">
+    Here's the full working code:
+
+    ```python
+    from typing import Annotated, Sequence
+    from langchain_core.messages import BaseMessage, HumanMessage
+    from langchain_core.tools import tool
+    from langchain_openai import ChatOpenAI
+    from langgraph.graph import StateGraph, START, END, add_messages
+    from langgraph.prebuilt import ToolNode
+    from typing_extensions import TypedDict
+
+    # State
+    class AgentState(TypedDict):
+        messages: Annotated[Sequence[BaseMessage], add_messages]
+
+    # Tools
+    @tool
+    def calculate(expression: str) -> str:
+        """Calculate a mathematical expression."""
+        try:
+            return str(eval(expression))
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    @tool
+    def get_weather(location: str) -> str:
+        """Get current weather for a location."""
+        return f"The weather in {location} is sunny, 72°F"
+
+    tools = [calculate, get_weather]
+
+    # Model
+    model = ChatOpenAI(model="gpt-4", temperature=0)
+    model_with_tools = model.bind_tools(tools)
+
+    # Nodes
+    def agent_node(state: AgentState) -> dict:
+        response = model_with_tools.invoke(state["messages"])
+        return {"messages": [response]}
+
+    tool_node = ToolNode(tools)
+
+    # Router
+    def should_continue(state: AgentState) -> str:
+        if state["messages"][-1].tool_calls:
+            return "tools"
+        return "end"
+
+    # Graph
+    graph = StateGraph(AgentState)
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", tool_node)
+    graph.add_edge(START, "agent")
+    graph.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})
+    graph.add_edge("tools", "agent")
+    app = graph.compile()
+
+    # Run
+    result = app.invoke({"messages": [HumanMessage(content="What is 123 * 456?")]})
+    print(result["messages"][-1].content)
+    ```
+
+    Save as `tool_agent.py` and run:
+
+    ```bash
+    python tool_agent.py
+    ```
+  </Step>
+</Steps>
+
+## Expected output
+
+When testing the agent:
+
+```python
+# Math calculation
+>>> "What is 25 * 17?"
+"25 * 17 equals 425."
+
+# Weather query
+>>> "What's the weather in Tokyo?"
+"The weather in Tokyo is sunny, 72°F."
+
+# Complex multi-step
+>>> "Calculate 100 * 50, then tell me the weather"
+"100 * 50 equals 5000. However, I need a specific location to check the weather."
+```
+
+## Key concepts
+
+- **Tool Binding**: `model.bind_tools(tools)` enables the model to call tools
+- **Tool Calls**: Model returns structured tool call requests
+- **ToolNode**: Automatically executes tool calls and formats results
+- **Conditional Routing**: Routes based on whether tools are needed
+- **Agent Loop**: Agent → Tools → Agent until task is complete
+
+## Advanced features
+
+<AccordionGroup>
+  <Accordion title="Add tool error handling">
+    ```python
+    @tool
+    def safe_calculate(expression: str) -> str:
+        """Calculate with validation."""
+        # Validate input
+        allowed_chars = set("0123456789+-*/(). ")
+        if not all(c in allowed_chars for c in expression):
+            return "Error: Invalid characters in expression"
+        
+        try:
+            result = eval(expression)
+            return str(result)
+        except Exception as e:
+            return f"Calculation error: {str(e)}"
+    ```
+  </Accordion>
+
+  <Accordion title="Add streaming">
+    ```python
+    # Stream agent execution
+    for chunk in app.stream({
+        "messages": [HumanMessage(content="What is 10 + 20?")]
+    }):
+        for node_name, node_output in chunk.items():
+            print(f"--- {node_name} ---")
+            print(node_output)
+    ```
+  </Accordion>
+
+  <Accordion title="Add custom tools with APIs">
+    ```python
+    import requests
+
+    @tool
+    def get_stock_price(symbol: str) -> str:
+        """Get current stock price.
+        
+        Args:
+            symbol: Stock ticker symbol (e.g., 'AAPL')
+        """
+        # Replace with real API
+        response = requests.get(
+            f"https://api.example.com/stock/{symbol}"
+        )
+        return response.json()["price"]
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="ReAct Agent" icon="brain" href="/tutorials/react-agent">
+    Build an agent that reasons about tool usage
+  </Card>
+  
+  <Card title="Multi-Agent" icon="users" href="/tutorials/multi-agent">
+    Coordinate multiple specialized agents
+  </Card>
+</CardGroup>
+
+<Note>
+  Tool calling is a fundamental capability for building useful agents. The agent can now interact with the external world through tools.
+</Note>

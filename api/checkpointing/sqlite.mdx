@@ -1,0 +1,413 @@
+---
+title: SqliteSaver
+description: SQLite-based checkpoint saver for LangGraph agents
+---
+
+`SqliteSaver` is a checkpoint saver that stores checkpoints in a SQLite database. It provides a lightweight, file-based persistence solution for LangGraph agents.
+
+## Overview
+
+SqliteSaver is designed for:
+- Lightweight, synchronous use cases
+- Demos and small projects
+- Local development and testing
+- Single-threaded applications
+
+<Warning>
+  SqliteSaver does not scale to multiple threads. For production workloads or async applications, consider using [AsyncSqliteSaver](#asyncsqlitesaver) or [PostgresSaver](/api/checkpointing/postgres).
+</Warning>
+
+## Class Definition
+
+```python
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+class SqliteSaver(BaseCheckpointSaver[str]):
+    """A checkpoint saver that stores checkpoints in a SQLite database."""
+```
+
+Source: `langgraph.checkpoint.sqlite.__init__:38`
+
+## Installation
+
+SqliteSaver is included in the base `langgraph-checkpoint-sqlite` package:
+
+```bash
+pip install langgraph-checkpoint-sqlite
+```
+
+## Constructor
+
+```python
+def __init__(
+    self,
+    conn: sqlite3.Connection,
+    *,
+    serde: SerializerProtocol | None = None,
+) -> None
+```
+
+### Parameters
+
+- `conn` (sqlite3.Connection): The SQLite database connection
+- `serde` (SerializerProtocol, optional): The serializer for encoding/decoding checkpoints. Defaults to `JsonPlusSerializer`
+
+Source: `langgraph.checkpoint.sqlite.__init__:78`
+
+## Usage
+
+### Basic Setup
+
+```python
+import sqlite3
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph import StateGraph
+
+# Create a graph
+builder = StateGraph(int)
+builder.add_node("add_one", lambda x: x + 1)
+builder.set_entry_point("add_one")
+builder.set_finish_point("add_one")
+
+# Create database connection and checkpointer
+# Note: check_same_thread=False is OK as the implementation uses a lock
+conn = sqlite3.connect("checkpoints.sqlite", check_same_thread=False)
+memory = SqliteSaver(conn)
+
+# Compile graph with checkpointer
+graph = builder.compile(checkpointer=memory)
+
+# Use the graph
+config = {"configurable": {"thread_id": "1"}}
+result = graph.invoke(3, config)
+print(result)  # Output: 4
+
+# Get state
+state = graph.get_state(config)
+print(state)
+# StateSnapshot(values=4, next=(), config={...}, parent_config=None)
+```
+
+### Using from_conn_string
+
+```python
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+# In-memory database
+with SqliteSaver.from_conn_string(":memory:") as memory:
+    graph = builder.compile(checkpointer=memory)
+    config = {"configurable": {"thread_id": "1"}}
+    result = graph.invoke(3, config)
+
+# Persistent database file
+with SqliteSaver.from_conn_string("checkpoints.sqlite") as memory:
+    graph = builder.compile(checkpointer=memory)
+    config = {"configurable": {"thread_id": "1"}}
+    result = graph.invoke(3, config)
+```
+
+## Class Methods
+
+### from_conn_string
+
+```python
+@classmethod
+@contextmanager
+def from_conn_string(cls, conn_string: str) -> Iterator[SqliteSaver]
+```
+
+Create a new SqliteSaver instance from a connection string.
+
+**Parameters:**
+- `conn_string` (str): The SQLite connection string. Use `:memory:` for in-memory database or a file path for persistent storage
+
+**Returns:**
+- `Iterator[SqliteSaver]`: A context manager yielding a SqliteSaver instance
+
+**Example:**
+
+```python
+# In-memory
+with SqliteSaver.from_conn_string(":memory:") as saver:
+    # Use saver
+    pass
+
+# Persistent file
+with SqliteSaver.from_conn_string("checkpoints.sqlite") as saver:
+    # Use saver
+    pass
+```
+
+Source: `langgraph.checkpoint.sqlite.__init__:90`
+
+## Instance Methods
+
+### setup
+
+```python
+def setup(self) -> None
+```
+
+Set up the checkpoint database. Creates the necessary tables if they don't exist.
+
+**Note:** This method is called automatically when needed and should not be called directly by users.
+
+Source: `langgraph.checkpoint.sqlite.__init__:122`
+
+### get_tuple
+
+```python
+def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None
+```
+
+Get a checkpoint tuple from the database.
+
+**Parameters:**
+- `config` (RunnableConfig): Configuration containing `thread_id` and optionally `checkpoint_id`
+
+**Returns:**
+- `CheckpointTuple | None`: The checkpoint tuple, or None if not found
+
+**Example:**
+
+```python
+# Get latest checkpoint
+config = {"configurable": {"thread_id": "1"}}
+checkpoint_tuple = memory.get_tuple(config)
+
+# Get specific checkpoint
+config = {
+    "configurable": {
+        "thread_id": "1",
+        "checkpoint_ns": "",
+        "checkpoint_id": "1ef4f797-8335-6428-8001-8a1503f9b875",
+    }
+}
+checkpoint_tuple = memory.get_tuple(config)
+```
+
+Source: `langgraph.checkpoint.sqlite.__init__:184`
+
+### list
+
+```python
+def list(
+    self,
+    config: RunnableConfig | None,
+    *,
+    filter: dict[str, Any] | None = None,
+    before: RunnableConfig | None = None,
+    limit: int | None = None,
+) -> Iterator[CheckpointTuple]
+```
+
+List checkpoints from the database.
+
+**Parameters:**
+- `config` (RunnableConfig | None): Base configuration for filtering
+- `filter` (dict[str, Any] | None): Additional metadata filtering criteria
+- `before` (RunnableConfig | None): Only return checkpoints before this checkpoint ID
+- `limit` (int | None): Maximum number of checkpoints to return
+
+**Returns:**
+- `Iterator[CheckpointTuple]`: Iterator of checkpoint tuples, ordered by checkpoint ID (newest first)
+
+**Example:**
+
+```python
+# List all checkpoints for a thread
+config = {"configurable": {"thread_id": "1"}}
+checkpoints = list(memory.list(config))
+
+# List with limit
+checkpoints = list(memory.list(config, limit=5))
+
+# List checkpoints before a specific checkpoint
+before_config = {
+    "configurable": {
+        "checkpoint_id": "1ef4f797-8335-6428-8001-8a1503f9b875"
+    }
+}
+checkpoints = list(memory.list(config, before=before_config))
+```
+
+Source: `langgraph.checkpoint.sqlite.__init__:288`
+
+### put
+
+```python
+def put(
+    self,
+    config: RunnableConfig,
+    checkpoint: Checkpoint,
+    metadata: CheckpointMetadata,
+    new_versions: ChannelVersions,
+) -> RunnableConfig
+```
+
+Save a checkpoint to the database.
+
+**Parameters:**
+- `config` (RunnableConfig): Configuration for the checkpoint
+- `checkpoint` (Checkpoint): The checkpoint to save
+- `metadata` (CheckpointMetadata): Additional metadata
+- `new_versions` (ChannelVersions): New channel versions
+
+**Returns:**
+- `RunnableConfig`: Updated configuration with the new checkpoint ID
+
+**Example:**
+
+```python
+config = {"configurable": {"thread_id": "1", "checkpoint_ns": ""}}
+checkpoint = {
+    "v": 1,
+    "ts": "2024-05-04T06:32:42.235444+00:00",
+    "id": "1ef4f797-8335-6428-8001-8a1503f9b875",
+    "channel_values": {"key": "value"},
+    "channel_versions": {},
+    "versions_seen": {},
+}
+metadata = {"source": "input", "step": 1}
+saved_config = memory.put(config, checkpoint, metadata, {})
+```
+
+Source: `langgraph.checkpoint.sqlite.__init__:380`
+
+### put_writes
+
+```python
+def put_writes(
+    self,
+    config: RunnableConfig,
+    writes: Sequence[tuple[str, Any]],
+    task_id: str,
+    task_path: str = "",
+) -> None
+```
+
+Store intermediate writes linked to a checkpoint.
+
+**Parameters:**
+- `config` (RunnableConfig): Configuration of the related checkpoint
+- `writes` (Sequence[tuple[str, Any]]): List of (channel, value) pairs to store
+- `task_id` (str): Identifier for the task creating the writes
+- `task_path` (str): Path of the task (default: "")
+
+Source: `langgraph.checkpoint.sqlite.__init__:438`
+
+### delete_thread
+
+```python
+def delete_thread(self, thread_id: str) -> None
+```
+
+Delete all checkpoints and writes associated with a thread ID.
+
+**Parameters:**
+- `thread_id` (str): The thread ID to delete
+
+**Example:**
+
+```python
+memory.delete_thread("thread-1")
+```
+
+Source: `langgraph.checkpoint.sqlite.__init__:477`
+
+### get_next_version
+
+```python
+def get_next_version(self, current: str | None, channel: None) -> str
+```
+
+Generate the next version ID for a channel.
+
+**Parameters:**
+- `current` (str | None): The current version identifier
+- `channel` (None): Deprecated parameter
+
+**Returns:**
+- `str`: The next version identifier (format: `"{version:032}.{random:016}"`)
+
+Source: `langgraph.checkpoint.sqlite.__init__:537`
+
+## Database Schema
+
+SqliteSaver creates two tables:
+
+### checkpoints table
+
+```sql
+CREATE TABLE checkpoints (
+    thread_id TEXT NOT NULL,
+    checkpoint_ns TEXT NOT NULL DEFAULT '',
+    checkpoint_id TEXT NOT NULL,
+    parent_checkpoint_id TEXT,
+    type TEXT,
+    checkpoint BLOB,
+    metadata BLOB,
+    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
+);
+```
+
+### writes table
+
+```sql
+CREATE TABLE writes (
+    thread_id TEXT NOT NULL,
+    checkpoint_ns TEXT NOT NULL DEFAULT '',
+    checkpoint_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    idx INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    type TEXT,
+    value BLOB,
+    PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
+);
+```
+
+## AsyncSqliteSaver
+
+For async applications, use `AsyncSqliteSaver`:
+
+```python
+import asyncio
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.graph import StateGraph
+
+async def main():
+    builder = StateGraph(int)
+    builder.add_node("add_one", lambda x: x + 1)
+    builder.set_entry_point("add_one")
+    builder.set_finish_point("add_one")
+    
+    async with AsyncSqliteSaver.from_conn_string("checkpoints.db") as memory:
+        graph = builder.compile(checkpointer=memory)
+        result = await graph.ainvoke(1, {"configurable": {"thread_id": "1"}})
+        print(result)  # Output: 2
+
+asyncio.run(main())
+```
+
+<Tip>
+  AsyncSqliteSaver requires the `aiosqlite` package:
+  ```bash
+  pip install aiosqlite
+  ```
+</Tip>
+
+Source: `langgraph.checkpoint.sqlite.aio:31`
+
+## Limitations
+
+- Not suitable for production workloads with high concurrency
+- Does not scale to multiple threads (use AsyncSqliteSaver or PostgresSaver instead)
+- SQLite's write performance is limited compared to dedicated databases
+- File locking can cause issues in distributed environments
+
+## See Also
+
+- [BaseCheckpointSaver](/api/checkpointing/base) - Base checkpoint interface
+- [PostgresSaver](/api/checkpointing/postgres) - PostgreSQL implementation for production
+- [AsyncSqliteSaver](https://langchain-ai.github.io/langgraph/reference/checkpoints/#langgraph.checkpoint.sqlite.aio.AsyncSqliteSaver) - Async SQLite implementation

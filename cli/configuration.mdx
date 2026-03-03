@@ -1,0 +1,894 @@
+---
+title: Configuration Reference
+description: Complete reference for langgraph.json configuration file
+---
+
+# Configuration Reference
+
+The `langgraph.json` file is the central configuration for your LangGraph application, defining dependencies, graphs, environment settings, and deployment options.
+
+## Schema
+
+You can enable IntelliSense and validation in your editor by adding the schema reference:
+
+```json
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "dependencies": [...],
+  "graphs": {...}
+}
+```
+
+## Configuration Structure
+
+### Minimal Configuration
+
+At minimum, you need to specify dependencies and graphs:
+
+```json
+{
+  "dependencies": ["langchain-openai", "."],
+  "graphs": {
+    "agent": "./src/agent.py:graph"
+  }
+}
+```
+
+### Complete Example
+
+```json
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "python_version": "3.11",
+  "dependencies": [
+    "langchain-openai",
+    "langchain-anthropic",
+    "."
+  ],
+  "graphs": {
+    "agent": "./src/agent.py:graph",
+    "research_assistant": {
+      "path": "./src/research.py:create_graph",
+      "description": "Multi-agent research assistant"
+    }
+  },
+  "env": ".env",
+  "store": {
+    "index": {
+      "embed": "openai:text-embedding-3-large",
+      "dims": 3072,
+      "fields": ["title", "content"]
+    }
+  },
+  "dockerfile_lines": [
+    "RUN apt-get update && apt-get install -y libmagic-dev"
+  ]
+}
+```
+
+---
+
+## Core Fields
+
+### `dependencies`
+
+**Type:** `string[]`  
+**Required:** Yes (for Python projects)
+
+List of Python packages to install. Can include:
+
+- PyPI packages: `"langchain-openai"`
+- Local packages: `"."` or `"./my_package"`
+- Git repositories: `"git+https://github.com/org/repo.git"`
+
+**Examples:**
+
+```json
+{
+  "dependencies": [
+    "langchain-openai",
+    "langchain-anthropic",
+    "wikipedia",
+    "."
+  ]
+}
+```
+
+```json
+{
+  "dependencies": [
+    "langchain-openai>=0.1.0",
+    "./packages/my-tools",
+    "git+https://github.com/org/private-lib.git@main"
+  ]
+}
+```
+
+<Note>
+The `"."` dependency tells the CLI to install your local package (looks for `pyproject.toml`, `setup.py`, or `requirements.txt`).
+</Note>
+
+### `graphs`
+
+**Type:** `Record<string, string | GraphDef>`  
+**Required:** Yes
+
+Maps graph IDs to their import paths. Each graph must point to a compiled graph object or a context manager that returns one.
+
+**Format:** `"path/to/file.py:variable_name"`
+
+**Simple format:**
+
+```json
+{
+  "graphs": {
+    "agent": "./src/agent.py:graph",
+    "chatbot": "./src/chatbot.py:chat_graph"
+  }
+}
+```
+
+**Extended format with descriptions:**
+
+```json
+{
+  "graphs": {
+    "agent": {
+      "path": "./src/agent.py:graph",
+      "description": "A ReAct agent with tool calling"
+    },
+    "research": {
+      "path": "./src/research.py:create_research_graph",
+      "description": "Multi-agent research system with web search"
+    }
+  }
+}
+```
+
+**Valid graph objects:**
+
+- `StateGraph` instances
+- `CompiledGraph` instances
+- Functions decorated with `@entrypoint`
+- Any `Pregel` object
+- Context managers that yield a graph:
+
+```python
+from contextlib import asynccontextmanager
+from langgraph.graph import StateGraph
+
+@asynccontextmanager
+async def create_graph(config):
+    # Setup
+    graph = StateGraph(...)
+    # ... configure graph
+    yield graph.compile()
+    # Cleanup
+```
+
+### `env`
+
+**Type:** `string | Record<string, string>`  
+**Required:** No
+
+Environment variables for your application.
+
+**As a file path:**
+
+```json
+{
+  "env": ".env"
+}
+```
+
+**As inline values:**
+
+```json
+{
+  "env": {
+    "OPENAI_API_KEY": "sk-...",
+    "ANTHROPIC_API_KEY": "sk-ant-...",
+    "LOG_LEVEL": "INFO"
+  }
+}
+```
+
+<Warning>
+Do not commit API keys directly in `langgraph.json`. Use a `.env` file and add it to `.gitignore`.
+</Warning>
+
+---
+
+## Python Configuration
+
+### `python_version`
+
+**Type:** `string`  
+**Default:** `"3.11"`  
+**Format:** `"major.minor"` (e.g., `"3.11"`, `"3.12"`, `"3.13"`)
+
+Python version for Docker deployment. Must be 3.11 or higher.
+
+```json
+{
+  "python_version": "3.12"
+}
+```
+
+<Note>
+Patch versions cannot be specified. The latest patch version of the specified minor version is used.
+</Note>
+
+### `pip_config_file`
+
+**Type:** `string`  
+**Required:** No
+
+Path to a pip configuration file for custom package indices or authentication.
+
+```json
+{
+  "pip_config_file": "./pip.conf"
+}
+```
+
+Example `pip.conf`:
+
+```ini
+[global]
+index-url = https://pypi.org/simple
+extra-index-url = https://my-private-pypi.com/simple
+```
+
+### `pip_installer`
+
+**Type:** `"auto" | "pip" | "uv"`  
+**Default:** `"auto"`
+
+Choose which package installer to use:
+
+- `"auto"`: Use `uv` if base image supports it, otherwise `pip`
+- `"pip"`: Force use of pip
+- `"uv"`: Force use of uv (faster, but requires compatible base image)
+
+```json
+{
+  "pip_installer": "uv"
+}
+```
+
+### `keep_pkg_tools`
+
+**Type:** `boolean | string[]`  
+**Default:** `false`
+
+Control whether to keep packaging tools (`pip`, `setuptools`, `wheel`) in the final image.
+
+```json
+// Keep all tools
+{
+  "keep_pkg_tools": true
+}
+
+// Keep specific tools
+{
+  "keep_pkg_tools": ["pip"]
+}
+
+// Remove all tools (default)
+{
+  "keep_pkg_tools": false
+}
+```
+
+---
+
+## Node.js Configuration
+
+### `node_version`
+
+**Type:** `string`  
+**Required:** For JavaScript/TypeScript graphs  
+**Format:** Major version only (e.g., `"20"`)
+
+Node.js version for JavaScript/TypeScript projects. Must be 20 or higher.
+
+```json
+{
+  "node_version": "20",
+  "graphs": {
+    "agent": "./src/agent.ts:graph"
+  }
+}
+```
+
+<Note>
+If your graphs use `.ts`, `.js`, `.mts`, or `.cts` extensions, Node.js support is automatically enabled.
+</Note>
+
+---
+
+## Docker Configuration
+
+### `base_image`
+
+**Type:** `string`  
+**Default:** `"langchain/langgraph-api"` (Python) or `"langchain/langgraphjs-api"` (Node.js)
+
+Base Docker image for your deployment.
+
+```json
+{
+  "base_image": "langchain/langgraph-api:0.2.47"
+}
+```
+
+**Version pinning examples:**
+
+```json
+// Pin to specific patch version
+{ "base_image": "langchain/langgraph-api:0.2.47" }
+
+// Pin to minor version (gets latest patch)
+{ "base_image": "langchain/langgraph-api:0.2" }
+
+// Use latest
+{ "base_image": "langchain/langgraph-api" }
+```
+
+### `api_version`
+
+**Type:** `string`  
+**Required:** No
+
+API server version to use. Alternative to specifying version in `base_image`.
+
+```json
+{
+  "api_version": "0.2.47"
+}
+```
+
+### `image_distro`
+
+**Type:** `"debian" | "wolfi" | "bookworm"`  
+**Default:** `"debian"`
+
+Linux distribution for the base image.
+
+```json
+{
+  "image_distro": "wolfi"
+}
+```
+
+- `"debian"`: Standard Debian-based image
+- `"wolfi"`: Minimal, security-focused distribution
+- `"bookworm"`: Debian 12 (Bookworm)
+
+### `dockerfile_lines`
+
+**Type:** `string[]`  
+**Required:** No
+
+Custom Dockerfile instructions to append after the base image.
+
+```json
+{
+  "dockerfile_lines": [
+    "RUN apt-get update && apt-get install -y libmagic-dev",
+    "ENV MY_CUSTOM_VAR=production",
+    "RUN pip install --no-cache-dir some-binary-package"
+  ]
+}
+```
+
+**Common use cases:**
+
+```json
+{
+  "dockerfile_lines": [
+    // Install system dependencies
+    "RUN apt-get update && apt-get install -y ffmpeg",
+    
+    // Set environment variables
+    "ENV TOKENIZERS_PARALLELISM=false",
+    
+    // Create directories
+    "RUN mkdir -p /app/data",
+    
+    // Install binary packages
+    "RUN pip install --no-cache-dir torch==2.0.0"
+  ]
+}
+```
+
+---
+
+## Store Configuration
+
+### `store`
+
+**Type:** `StoreConfig`  
+**Required:** No
+
+Configuration for the built-in long-term memory store with semantic search.
+
+```json
+{
+  "store": {
+    "index": {
+      "embed": "openai:text-embedding-3-large",
+      "dims": 3072,
+      "fields": ["title", "content"]
+    },
+    "ttl": {
+      "refresh_on_read": true,
+      "default_ttl": 1440,
+      "sweep_interval_minutes": 60
+    }
+  }
+}
+```
+
+#### `store.index`
+
+Semantic search configuration.
+
+**Required fields:**
+
+- `embed`: Embedding model identifier
+- `dims`: Embedding dimension
+
+**Optional fields:**
+
+- `fields`: JSON fields to embed (default: `["$"]` - entire object)
+
+**Embedding model formats:**
+
+```json
+// Provider:model format
+{ "embed": "openai:text-embedding-3-large" }
+
+// Local function
+{ "embed": "./src/embeddings.py:embed_function" }
+```
+
+**Common embedding dimensions:**
+
+| Model | Dimensions |
+|-------|------------|
+| `openai:text-embedding-3-large` | 3072 |
+| `openai:text-embedding-3-small` | 1536 |
+| `openai:text-embedding-ada-002` | 1536 |
+| `cohere:embed-english-v3.0` | 1024 |
+| `cohere:embed-multilingual-v3.0` | 1024 |
+
+#### `store.ttl`
+
+Time-to-live configuration for automatic data expiration.
+
+```json
+{
+  "store": {
+    "ttl": {
+      "refresh_on_read": true,
+      "default_ttl": 1440,
+      "sweep_interval_minutes": 60
+    }
+  }
+}
+```
+
+- `refresh_on_read`: Refresh TTL on read operations (default: `true`)
+- `default_ttl`: Default TTL in minutes for new items
+- `sweep_interval_minutes`: Interval between TTL sweep iterations
+
+---
+
+## Checkpointer Configuration
+
+### `checkpointer`
+
+**Type:** `CheckpointerConfig`  
+**Required:** No
+
+Configuration for custom checkpointer implementations.
+
+```json
+{
+  "checkpointer": {
+    "path": "./src/checkpointer.py:create_checkpointer",
+    "ttl": {
+      "strategy": "keep_latest",
+      "default_ttl": 10080,
+      "sweep_interval_minutes": 60
+    },
+    "serde": {
+      "allowed_msgpack_modules": [
+        ["my_agent.models", "MyState"]
+      ],
+      "pickle_fallback": false
+    }
+  }
+}
+```
+
+#### `checkpointer.path`
+
+Import path to an async context manager that yields a `BaseCheckpointSaver` instance.
+
+```python
+from contextlib import asynccontextmanager
+from langgraph.checkpoint import BaseCheckpointSaver
+
+@asynccontextmanager
+async def create_checkpointer():
+    # Initialize checkpointer
+    checkpointer = MyCheckpointer(...)
+    try:
+        yield checkpointer
+    finally:
+        # Cleanup
+        await checkpointer.close()
+```
+
+#### `checkpointer.ttl`
+
+Thread TTL configuration:
+
+```json
+{
+  "ttl": {
+    "strategy": "delete",
+    "default_ttl": 10080,
+    "sweep_interval_minutes": 60,
+    "sweep_limit": 1000
+  }
+}
+```
+
+- `strategy`: `"delete"` (remove thread) or `"keep_latest"` (keep latest state)
+- `default_ttl`: Default TTL in minutes
+- `sweep_interval_minutes`: Interval between sweeps (default: ~5 minutes)
+- `sweep_limit`: Max threads per sweep (default: 1000)
+
+#### `checkpointer.serde`
+
+Serialization/deserialization configuration:
+
+```json
+{
+  "serde": {
+    "allowed_json_modules": [
+      ["my_agent", "my_file", "SomeType"]
+    ],
+    "allowed_msgpack_modules": [
+      ["my_agent.models", "MyState"]
+    ],
+    "pickle_fallback": true
+  }
+}
+```
+
+---
+
+## Authentication Configuration
+
+### `auth`
+
+**Type:** `AuthConfig`  
+**Required:** No
+
+Custom authentication configuration.
+
+```json
+{
+  "auth": {
+    "path": "./src/auth.py:my_auth",
+    "disable_studio_auth": false,
+    "openapi": {
+      "securitySchemes": {
+        "OAuth2": {
+          "type": "oauth2",
+          "flows": {
+            "password": {
+              "tokenUrl": "/token",
+              "scopes": {
+                "read": "Read access",
+                "write": "Write access"
+              }
+            }
+          }
+        }
+      },
+      "security": [
+        {"OAuth2": ["read", "write"]}
+      ]
+    },
+    "cache": {
+      "cache_keys": ["user_id"],
+      "ttl_seconds": 3600,
+      "max_size": 1000
+    }
+  }
+}
+```
+
+---
+
+## Encryption Configuration
+
+### `encryption`
+
+**Type:** `EncryptionConfig`  
+**Required:** No
+
+Custom at-rest encryption for sensitive data.
+
+```json
+{
+  "encryption": {
+    "path": "./src/encryption.py:my_encryption"
+  }
+}
+```
+
+---
+
+## HTTP Server Configuration
+
+### `http`
+
+**Type:** `HttpConfig`  
+**Required:** No
+
+Configuration for the built-in HTTP server.
+
+```json
+{
+  "http": {
+    "app": "./src/app.py:custom_app",
+    "mount_prefix": "/api",
+    "disable_assistants": false,
+    "disable_threads": false,
+    "disable_runs": false,
+    "disable_store": false,
+    "disable_mcp": false,
+    "disable_a2a": false,
+    "disable_meta": false,
+    "disable_ui": false,
+    "disable_webhooks": false,
+    "cors": {
+      "allow_origins": ["https://example.com"],
+      "allow_methods": ["GET", "POST"],
+      "allow_headers": ["Content-Type", "Authorization"],
+      "allow_credentials": true,
+      "max_age": 600
+    },
+    "configurable_headers": {
+      "includes": ["x-custom-*"],
+      "excludes": ["*key*", "*token*"]
+    },
+    "middleware_order": "middleware_first",
+    "enable_custom_route_auth": false
+  }
+}
+```
+
+#### Endpoint Control
+
+Disable specific endpoint groups:
+
+```json
+{
+  "http": {
+    "disable_assistants": true,  // Removes /assistants routes
+    "disable_threads": true,     // Removes /threads routes
+    "disable_runs": true,        // Removes /runs routes
+    "disable_store": true,       // Removes /store routes
+    "disable_mcp": true,         // Removes /mcp routes
+    "disable_a2a": true,         // Removes /a2a routes
+    "disable_meta": true,        // Removes /openapi.json, /info, /metrics, /docs
+    "disable_ui": true,          // Removes /ui routes
+    "disable_webhooks": true     // Disables webhook delivery
+  }
+}
+```
+
+#### CORS Configuration
+
+```json
+{
+  "http": {
+    "cors": {
+      "allow_origins": ["https://app.example.com"],
+      "allow_methods": ["GET", "POST", "PUT", "DELETE"],
+      "allow_headers": ["Content-Type", "Authorization"],
+      "allow_credentials": true,
+      "allow_origin_regex": "^https://.*\\.example\\.com$",
+      "expose_headers": ["X-Request-ID"],
+      "max_age": 3600
+    }
+  }
+}
+```
+
+---
+
+## Webhooks Configuration
+
+### `webhooks`
+
+**Type:** `WebhooksConfig`  
+**Required:** No
+
+Configuration for outbound webhook delivery.
+
+```json
+{
+  "webhooks": {
+    "env_prefix": "LG_WEBHOOK_",
+    "url": {
+      "require_https": true,
+      "allowed_domains": ["hooks.example.com", "*.mycorp.com"],
+      "allowed_ports": [443, 8443],
+      "max_url_length": 2048,
+      "disable_loopback": true
+    },
+    "headers": {
+      "Authorization": "Bearer ${{ env.LG_WEBHOOK_TOKEN }}",
+      "X-Custom-Header": "static-value"
+    }
+  }
+}
+```
+
+---
+
+## UI Configuration
+
+### `ui`
+
+**Type:** `Record<string, string>`  
+**Required:** No
+
+Named UI components emitted by your agent.
+
+```json
+{
+  "ui": {
+    "chat": "./src/ui/chat.tsx",
+    "dashboard": "./src/ui/dashboard.tsx"
+  }
+}
+```
+
+### `ui_config`
+
+**Type:** `object`  
+**Required:** No
+
+Additional UI configuration.
+
+```json
+{
+  "ui_config": {
+    "theme": "dark",
+    "title": "My Agent"
+  }
+}
+```
+
+---
+
+## Complete Example
+
+Here's a comprehensive configuration example:
+
+```json
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "python_version": "3.12",
+  "api_version": "0.2.47",
+  "image_distro": "debian",
+  "pip_installer": "uv",
+  
+  "dependencies": [
+    "langchain-openai>=0.1.0",
+    "langchain-anthropic>=0.1.0",
+    "langchain-community",
+    "wikipedia",
+    "."
+  ],
+  
+  "graphs": {
+    "agent": {
+      "path": "./src/agent.py:graph",
+      "description": "Main ReAct agent with web search"
+    },
+    "research": {
+      "path": "./src/research.py:research_graph",
+      "description": "Multi-agent research assistant"
+    }
+  },
+  
+  "env": ".env",
+  
+  "store": {
+    "index": {
+      "embed": "openai:text-embedding-3-large",
+      "dims": 3072,
+      "fields": ["title", "content"]
+    },
+    "ttl": {
+      "default_ttl": 10080,
+      "sweep_interval_minutes": 60
+    }
+  },
+  
+  "checkpointer": {
+    "ttl": {
+      "strategy": "keep_latest",
+      "default_ttl": 10080
+    }
+  },
+  
+  "http": {
+    "cors": {
+      "allow_origins": ["https://app.example.com"],
+      "allow_credentials": true
+    }
+  },
+  
+  "dockerfile_lines": [
+    "RUN apt-get update && apt-get install -y ffmpeg"
+  ]
+}
+```
+
+---
+
+## Validation
+
+The CLI validates your configuration when running any command. Common errors:
+
+### Missing Required Fields
+
+```
+Error: No graphs found in config. Add at least one graph to 'graphs' dictionary.
+```
+
+**Fix:** Add at least one graph definition.
+
+### Invalid Python Version
+
+```
+Error: Python version 3.10 is not supported. Minimum required version is 3.11.
+```
+
+**Fix:** Use Python 3.11 or higher.
+
+### Invalid Graph Path
+
+```
+Error: Import string "./agent.py" must be in format "<module>:<attribute>".
+```
+
+**Fix:** Use correct format: `"./agent.py:graph"`
+
+### Reserved Package Names
+
+```
+Error: Package name 'langgraph' used in local dep '.' is reserved. Rename the directory.
+```
+
+**Fix:** Don't use reserved names for your package directories.
+
+---
+
+## Next Steps
+
+- Learn about [CLI commands](/cli/commands)
+- Explore [deployment guide](/guides/deployment)
+- Read about [building graphs](/guides/building-graphs)

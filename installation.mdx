@@ -1,0 +1,335 @@
+---
+title: Installation
+description: Install LangGraph using pip, poetry, or uv package managers
+---
+
+# Installation
+
+This guide covers installing LangGraph and its dependencies for Python projects.
+
+## Requirements
+
+LangGraph requires:
+
+- **Python 3.10 or higher**
+- Supported Python versions: 3.10, 3.11, 3.12, 3.13
+
+<Warning>
+Python 3.9 and earlier are not supported. Please upgrade to Python 3.10 or later.
+</Warning>
+
+## Installing LangGraph
+
+Choose your preferred package manager:
+
+<CodeGroup>
+
+```bash pip
+pip install -U langgraph
+```
+
+```bash poetry
+poetry add langgraph
+```
+
+```bash uv
+uv add langgraph
+```
+
+</CodeGroup>
+
+The `-U` flag in pip ensures you get the latest version.
+
+## Core Dependencies
+
+When you install LangGraph, the following dependencies are automatically included:
+
+- **langchain-core** (>=0.1) - Core LangChain abstractions
+- **langgraph-checkpoint** (>=2.1.0, &lt;5.0.0) - Checkpointing interfaces
+- **langgraph-sdk** (>=0.3.0, &lt;0.4.0) - SDK for LangGraph Server API
+- **langgraph-prebuilt** (>=1.0.8, &lt;1.1.0) - Prebuilt agent components
+- **xxhash** (>=3.5.0) - Fast hashing for state management
+- **pydantic** (>=2.7.4) - Data validation and settings management
+
+<Note>
+You don't need to install these dependencies separately unless you want specific versions.
+</Note>
+
+## Optional Dependencies
+
+Depending on your use case, you may want to install additional packages:
+
+### Checkpointing Backends
+
+For persistent state storage:
+
+<CodeGroup>
+
+```bash SQLite
+pip install langgraph-checkpoint-sqlite
+```
+
+```bash PostgreSQL
+pip install langgraph-checkpoint-postgres
+```
+
+</CodeGroup>
+
+### LangGraph CLI
+
+For local development and deployment:
+
+```bash
+pip install langgraph-cli
+```
+
+<Tip>
+The LangGraph CLI includes tools for developing, testing, and deploying LangGraph applications. It supports Python versions up to 3.13.
+</Tip>
+
+### LangChain Integrations
+
+While LangGraph works standalone, you may want LangChain for additional integrations:
+
+```bash
+pip install langchain
+```
+
+For specific integrations:
+
+<CodeGroup>
+
+```bash OpenAI
+pip install langchain-openai
+```
+
+```bash Anthropic
+pip install langchain-anthropic
+```
+
+```bash Community
+pip install langchain-community
+```
+
+</CodeGroup>
+
+## Verify Installation
+
+Confirm LangGraph is installed correctly:
+
+```python
+import langgraph
+print(langgraph.__version__)
+```
+
+You should see the version number (e.g., `1.0.10`).
+
+Or run a simple test:
+
+```python
+from langgraph.graph import StateGraph
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: int
+
+graph = StateGraph(State)
+print("LangGraph is installed correctly!")
+```
+
+## Development Installation
+
+For contributing to LangGraph or running from source:
+
+<Steps>
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/langchain-ai/langgraph.git
+cd langgraph/libs/langgraph
+```
+
+### Install in Editable Mode
+
+<CodeGroup>
+
+```bash pip
+pip install -e .
+```
+
+```bash uv
+uv pip install -e .
+```
+
+</CodeGroup>
+
+### Install Development Dependencies
+
+```bash
+pip install -e ".[dev]"
+```
+
+This installs:
+- Testing tools (pytest, pytest-cov, pytest-mock, etc.)
+- Linting tools (mypy, ruff)
+- Development utilities (jupyter)
+
+</Steps>
+
+## Version Management
+
+### Check Current Version
+
+```bash
+pip show langgraph
+```
+
+### Upgrade to Latest Version
+
+<CodeGroup>
+
+```bash pip
+pip install --upgrade langgraph
+```
+
+```bash poetry
+poetry update langgraph
+```
+
+```bash uv
+uv pip install --upgrade langgraph
+```
+
+</CodeGroup>
+
+### Install Specific Version
+
+```bash
+pip install langgraph==1.0.10
+```
+
+## Common Installation Issues
+
+### Python Version Mismatch
+
+If you see errors about Python version:
+
+```bash
+# Check your Python version
+python --version
+
+# Use Python 3.10+ explicitly
+python3.10 -m pip install langgraph
+```
+
+### Dependency Conflicts
+
+If you encounter dependency conflicts:
+
+```bash
+# Create a fresh virtual environment
+python -m venv langgraph-env
+source langgraph-env/bin/activate  # On Windows: langgraph-env\Scripts\activate
+pip install langgraph
+```
+
+### Permission Errors
+
+On Linux/Mac, if you get permission errors:
+
+```bash
+# Use --user flag
+pip install --user langgraph
+
+# Or use a virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate
+pip install langgraph
+```
+
+## Virtual Environment Setup
+
+<Tip>
+Always use virtual environments to avoid dependency conflicts.
+</Tip>
+
+<CodeGroup>
+
+```bash venv
+# Create virtual environment
+python -m venv myenv
+
+# Activate (Linux/Mac)
+source myenv/bin/activate
+
+# Activate (Windows)
+myenv\Scripts\activate
+
+# Install LangGraph
+pip install langgraph
+```
+
+```bash conda
+# Create conda environment
+conda create -n langgraph-env python=3.11
+conda activate langgraph-env
+pip install langgraph
+```
+
+```bash poetry
+# Initialize project with poetry
+poetry init
+poetry add langgraph
+poetry shell
+```
+
+</CodeGroup>
+
+## Docker Installation
+
+For containerized deployments:
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install LangGraph
+RUN pip install --no-cache-dir langgraph
+
+# Copy your application
+COPY . .
+
+CMD ["python", "your_app.py"]
+```
+
+## Next Steps
+
+Now that LangGraph is installed:
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first LangGraph application
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts">
+    Learn the fundamentals of LangGraph
+  </Card>
+  <Card title="API Reference" icon="code" href="https://reference.langchain.com/python/langgraph/">
+    Explore the complete API documentation
+  </Card>
+  <Card title="Examples" icon="flask" href="https://docs.langchain.com/oss/python/langgraph/agentic-rag">
+    See real-world implementations
+  </Card>
+</CardGroup>
+
+## Additional Resources
+
+- [PyPI Package](https://pypi.org/project/langgraph/) - Official package page
+- [GitHub Repository](https://github.com/langchain-ai/langgraph) - Source code and issues
+- [Changelog](https://github.com/langchain-ai/langgraph/releases) - Release notes and updates
+- [LangSmith](https://docs.langchain.com/langsmith/home) - Debugging and deployment tools
+
+<Note>
+For JavaScript/TypeScript, see the [LangGraph.js installation guide](https://docs.langchain.com/oss/javascript/langgraph/overview).
+</Note>

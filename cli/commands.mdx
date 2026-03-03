@@ -1,0 +1,558 @@
+---
+title: CLI Commands
+description: Complete reference for all LangGraph CLI commands, flags, and options
+---
+
+# CLI Commands
+
+Complete reference for all LangGraph CLI commands and their options.
+
+## `langgraph new`
+
+Create a new LangGraph project from a template.
+
+```bash
+langgraph new [PATH] --template TEMPLATE_NAME
+```
+
+### Arguments
+
+- `PATH` (optional): Directory path where the project will be created. Defaults to current directory.
+
+### Options
+
+- `--template TEXT`: Template name to use for project scaffolding
+
+### Examples
+
+```bash
+# Create a new project in current directory
+langgraph new --template react-agent
+
+# Create a new project in specified directory
+langgraph new my-agent --template react-agent
+
+# Create in nested path
+langgraph new agents/my-agent --template react-agent
+```
+
+---
+
+## `langgraph dev`
+
+Run LangGraph API server in development mode with hot reloading and debugging support.
+
+```bash
+langgraph dev [OPTIONS]
+```
+
+<Note>
+Requires `langgraph-cli[inmem]` to be installed and Python 3.11+.
+</Note>
+
+### Options
+
+#### Server Configuration
+
+- `--host TEXT`  
+  Network interface to bind the server to  
+  **Default:** `127.0.0.1`  
+  **Security Note:** Only use `0.0.0.0` in trusted networks
+
+- `--port INTEGER`  
+  Port number to bind the server to  
+  **Default:** `2024`
+
+- `--config PATH`  
+  Path to configuration file declaring dependencies, graphs, and environment variables  
+  **Default:** `langgraph.json`
+
+#### Development Features
+
+- `--no-reload`  
+  Disable automatic reloading when code changes are detected  
+  **Default:** Reload enabled
+
+- `--no-browser`  
+  Skip automatically opening the browser when the server starts
+
+- `--studio-url TEXT`  
+  URL of the LangGraph Studio instance to connect to  
+  **Default:** `https://smith.langchain.com`
+
+#### Performance
+
+- `--n-jobs-per-worker INTEGER`  
+  Maximum number of concurrent jobs each worker process can handle  
+  **Default:** `10`
+
+- `--allow-blocking`  
+  Don't raise errors for synchronous I/O blocking operations in your code  
+  **Default:** Blocking operations raise errors
+
+#### Debugging
+
+- `--debug-port INTEGER`  
+  Enable remote debugging by listening on specified port  
+  **Requires:** `debugpy` to be installed
+
+- `--wait-for-client`  
+  Wait for a debugger client to connect before starting the server  
+  **Default:** `False`
+
+#### Networking
+
+- `--tunnel`  
+  Expose the local server via a public tunnel (Cloudflare) for remote frontend access  
+  **Default:** `False`  
+  **Use Case:** Avoid localhost connection issues with browsers or networks
+
+#### Logging
+
+- `--server-log-level TEXT`  
+  Set the log level for the API server  
+  **Default:** `WARNING`  
+  **Options:** `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
+
+### Examples
+
+```bash
+# Start development server with defaults
+langgraph dev
+
+# Custom port and host
+langgraph dev --port 8000 --host 0.0.0.0
+
+# Disable auto-reload
+langgraph dev --no-reload
+
+# Enable debugging on port 5678
+langgraph dev --debug-port 5678
+
+# Debug with wait for client
+langgraph dev --debug-port 5678 --wait-for-client
+
+# Custom config file
+langgraph dev --config ./configs/dev.json
+
+# Expose via tunnel for remote access
+langgraph dev --tunnel
+
+# Detailed logging
+langgraph dev --server-log-level DEBUG
+
+# Increase concurrent jobs per worker
+langgraph dev --n-jobs-per-worker 20
+```
+
+### Terminal Output
+
+When the server starts, you'll see:
+
+```
+Ready!
+- API: http://localhost:2024
+- Docs: http://localhost:2024/docs
+- LangGraph Studio: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+```
+
+---
+
+## `langgraph up`
+
+Launch LangGraph API server in Docker with full production environment.
+
+```bash
+langgraph up [OPTIONS]
+```
+
+### Options
+
+#### Basic Configuration
+
+- `-c, --config FILE`  
+  Path to configuration file  
+  **Default:** `langgraph.json`
+
+- `-p, --port INTEGER`  
+  Port to expose  
+  **Default:** `8123`
+
+#### Docker Options
+
+- `--pull / --no-pull`  
+  Pull latest images or use locally-built images  
+  **Default:** `--pull`
+
+- `--recreate / --no-recreate`  
+  Recreate containers even if configuration and image haven't changed  
+  **Default:** `--no-recreate`
+
+- `-d, --docker-compose FILE`  
+  Path to docker-compose.yml file with additional services to launch
+
+#### Image Options
+
+- `--image TEXT`  
+  Docker image to use for the langgraph-api service  
+  **Use Case:** Test against an image already built using `langgraph build`  
+  Skips building and uses this image directly
+
+- `--base-image TEXT`  
+  Base image to use for the LangGraph API server  
+  **Default:** `langchain/langgraph-api` or `langchain/langgraphjs-api`
+
+- `--api-version TEXT`  
+  API server version to use for the base image  
+  **Default:** Latest version
+
+#### Development Features
+
+- `--watch`  
+  Restart on file changes  
+  **Note:** Rebuilds and restarts containers when code changes
+
+- `--wait`  
+  Wait for services to start before returning  
+  **Implies:** `--detach`
+
+- `--verbose`  
+  Show detailed output from the server logs
+
+#### Debugger Options
+
+- `--debugger-port INTEGER`  
+  Pull the debugger image locally and serve the UI on specified port
+
+- `--debugger-base-url TEXT`  
+  URL used by the debugger to access LangGraph API  
+  **Default:** `http://127.0.0.1:[PORT]`
+
+#### Database Options
+
+- `--postgres-uri TEXT`  
+  Postgres URI to use for the database  
+  **Default:** Launches a local database
+
+### Examples
+
+```bash
+# Start with defaults
+langgraph up
+
+# Custom port
+langgraph up --port 8000
+
+# Use locally-built image (no pull)
+langgraph up --no-pull
+
+# Watch for file changes and auto-restart
+langgraph up --watch
+
+# Wait for services to be ready
+langgraph up --wait
+
+# Verbose logging
+langgraph up --verbose
+
+# Force recreate all containers
+langgraph up --recreate
+
+# Use custom base image version
+langgraph up --base-image langchain/langgraph-api:0.2.47
+
+# Use pre-built image
+langgraph up --image my-agent:latest --no-pull
+
+# Custom config with additional services
+langgraph up -c langgraph.json -d docker-compose.services.yml
+
+# With debugger UI
+langgraph up --debugger-port 8001
+
+# Custom Postgres database
+langgraph up --postgres-uri postgresql://user:pass@localhost:5432/mydb
+
+# Pin to specific API version
+langgraph up --api-version 0.2.47
+```
+
+### Terminal Output
+
+```
+Starting LangGraph API server...
+For local dev, requires env var LANGSMITH_API_KEY with access to LangSmith Deployment.
+For production use, requires a license key in env var LANGGRAPH_CLOUD_LICENSE_KEY.
+
+Ready!
+- API: http://localhost:8123
+- Docs: http://localhost:8123/docs
+- LangGraph Studio: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8123
+```
+
+---
+
+## `langgraph build`
+
+Build a Docker image for your LangGraph application.
+
+```bash
+langgraph build -t IMAGE_TAG [OPTIONS] [DOCKER_BUILD_ARGS]
+```
+
+### Options
+
+#### Required
+
+- `-t, --tag TEXT`  
+  Tag for the docker image  
+  **Required**
+
+#### Configuration
+
+- `-c, --config FILE`  
+  Path to configuration file  
+  **Default:** `langgraph.json`
+
+#### Image Options
+
+- `--base-image TEXT`  
+  Base image to use for the LangGraph API server  
+  **Default:** `langchain/langgraph-api` or `langchain/langgraphjs-api`
+
+- `--api-version TEXT`  
+  API server version to use for the base image  
+  **Default:** Latest version
+
+- `--pull / --no-pull`  
+  Pull latest images or use locally-built images  
+  **Default:** `--pull`
+
+#### Build Commands (JavaScript/TypeScript)
+
+- `--install-command TEXT`  
+  Custom install command to run from the build context root  
+  **Auto-detects:** Based on package manager files (package-lock.json, yarn.lock, etc.)
+
+- `--build-command TEXT`  
+  Custom build command to run from the langgraph.json directory  
+  **Default:** Uses default build process
+
+#### Docker Build Arguments
+
+You can pass additional arguments to `docker build` after all CLI options:
+
+- `--platform`: Target platforms (e.g., `linux/amd64,linux/arm64`)
+- `--build-arg`: Build-time variables
+- `--cache-from`: Images to consider as cache sources
+- `--push`: Push the image after building
+- And any other valid `docker build` arguments
+
+### Examples
+
+```bash
+# Basic build
+langgraph build -t my-agent:latest
+
+# Build for multiple platforms
+langgraph build -t my-agent:latest --platform linux/amd64,linux/arm64
+
+# Use specific base image version
+langgraph build -t my-agent:v1.0 --base-image langchain/langgraph-api:0.2.47
+
+# Use local base image (no pull)
+langgraph build -t my-agent:dev --no-pull
+
+# Build with custom config
+langgraph build -t my-agent:latest -c configs/production.json
+
+# Build and push to registry
+langgraph build -t myregistry.io/my-agent:latest --push
+
+# Build with build arguments
+langgraph build -t my-agent:latest --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+# Custom install command for JS projects
+langgraph build -t my-agent:latest --install-command "pnpm install --frozen-lockfile"
+
+# Custom build command
+langgraph build -t my-agent:latest --build-command "npm run build:prod"
+
+# Use cache from previous build
+langgraph build -t my-agent:latest --cache-from my-agent:previous
+```
+
+---
+
+## `langgraph dockerfile`
+
+Generate a Dockerfile for custom deployments.
+
+```bash
+langgraph dockerfile SAVE_PATH [OPTIONS]
+```
+
+### Arguments
+
+- `SAVE_PATH`: Path where the Dockerfile will be saved (required)
+
+### Options
+
+- `-c, --config FILE`  
+  Path to configuration file  
+  **Default:** `langgraph.json`
+
+- `--base-image TEXT`  
+  Base image to use for the LangGraph API server  
+  **Default:** `langchain/langgraph-api` or `langchain/langgraphjs-api`
+
+- `--api-version TEXT`  
+  API server version to use for the base image  
+  **Default:** Latest version
+
+- `--add-docker-compose`  
+  Add additional files for running with docker-compose  
+  **Creates:** `docker-compose.yml`, `.env`, `.dockerignore`
+
+### Examples
+
+```bash
+# Generate Dockerfile only
+langgraph dockerfile ./Dockerfile
+
+# Generate with docker-compose setup
+langgraph dockerfile ./Dockerfile --add-docker-compose
+
+# Use specific base image
+langgraph dockerfile ./Dockerfile --base-image langchain/langgraph-api:0.2.47
+
+# Custom config file
+langgraph dockerfile ./deploy/Dockerfile -c configs/prod.json
+
+# Generate in specific directory with compose files
+langgraph dockerfile ./deploy/Dockerfile --add-docker-compose
+```
+
+### Generated Files
+
+With `--add-docker-compose`, the command creates:
+
+```
+./
+├── Dockerfile              # Generated Dockerfile
+├── docker-compose.yml      # Docker Compose configuration
+├── .dockerignore          # Files to exclude from build context
+└── .env                   # Environment variables template (if doesn't exist)
+```
+
+### Terminal Output
+
+```
+🔍 Validating configuration at path: langgraph.json
+✅ Configuration validated!
+📝 Generating Dockerfile at ./Dockerfile
+✅ Created: Dockerfile
+✅ Created: .dockerignore
+✅ Created: docker-compose.yml
+✅ Created: .env
+🎉 Files generated successfully at path ./!
+```
+
+---
+
+## Global Options
+
+These options work with all commands:
+
+### Version
+
+```bash
+langgraph --version
+```
+
+Display the CLI version.
+
+### Help
+
+```bash
+langgraph --help
+langgraph [COMMAND] --help
+```
+
+Display help information for the CLI or a specific command.
+
+---
+
+## Common Patterns
+
+### Local Development Workflow
+
+```bash
+# Start development
+langgraph dev
+
+# Test in Docker
+langgraph up --watch
+
+# Build for production
+langgraph build -t my-agent:v1.0
+```
+
+### Multi-Platform Builds
+
+```bash
+# Build for multiple architectures
+langgraph build -t my-agent:latest \
+  --platform linux/amd64,linux/arm64 \
+  --push
+```
+
+### Using Custom Base Images
+
+```bash
+# Development with specific version
+langgraph dev
+
+# Production build with pinned version
+langgraph build -t my-agent:prod \
+  --base-image langchain/langgraph-api:0.2.47
+```
+
+### Docker Compose Development
+
+```bash
+# Generate compose files
+langgraph dockerfile ./Dockerfile --add-docker-compose
+
+# Run with compose
+docker-compose up
+```
+
+---
+
+## Exit Codes
+
+The CLI uses standard exit codes:
+
+- `0`: Success
+- `1`: General error (invalid arguments, command failed, etc.)
+- `2`: Command line usage error
+
+---
+
+## Environment Requirements
+
+### For `langgraph dev`
+
+- Python 3.11 or higher
+- `langgraph-cli[inmem]` installed
+
+### For `langgraph up` and `langgraph build`
+
+- Docker installed and running
+- Docker Compose (plugin or standalone)
+
+### For All Commands
+
+- Valid `langgraph.json` configuration file
+- Required API keys in environment or `.env` file

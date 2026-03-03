@@ -1,0 +1,207 @@
+---
+title: "Build a Simple Agent"
+description: "Create your first LangGraph agent from scratch"
+---
+
+In this tutorial, you'll build a simple agent that can respond to messages and maintain state. This is the foundation for understanding how LangGraph works.
+
+## What you'll build
+
+A basic agent that:
+- Processes user input
+- Maintains conversation state
+- Returns responses
+- Uses LangGraph's state management
+
+## Prerequisites
+
+Install LangGraph:
+
+```bash
+pip install -U langgraph
+```
+
+## Tutorial
+
+<Steps>
+  <Step title="Define the state">
+    First, define the state structure for your agent. The state holds all the information that flows through your graph.
+
+    ```python
+    from typing_extensions import TypedDict
+    from langgraph.graph import StateGraph, START, END
+
+    class AgentState(TypedDict):
+        """State for the agent containing the message text."""
+        text: str
+        count: int
+    ```
+
+    The `AgentState` will track:
+    - `text`: The current message text
+    - `count`: Number of times the agent has processed messages
+  </Step>
+
+  <Step title="Create node functions">
+    Nodes are functions that process the state. Each node receives the current state and returns updates.
+
+    ```python
+    def process_input(state: AgentState) -> dict:
+        """Process the input message."""
+        text = state["text"]
+        count = state.get("count", 0)
+        
+        # Transform the text
+        processed_text = f"Processed: {text.upper()}"
+        
+        return {
+            "text": processed_text,
+            "count": count + 1
+        }
+
+    def generate_response(state: AgentState) -> dict:
+        """Generate a response based on processed input."""
+        text = state["text"]
+        count = state["count"]
+        
+        response = f"{text} (processed {count} times)"
+        
+        return {"text": response}
+    ```
+
+    Each function:
+    - Takes `state` as input
+    - Returns a dictionary with state updates
+    - Can access any field from the state
+  </Step>
+
+  <Step title="Build the graph">
+    Now create the graph by adding nodes and defining edges between them.
+
+    ```python
+    # Initialize the graph
+    graph = StateGraph(AgentState)
+
+    # Add nodes
+    graph.add_node("process", process_input)
+    graph.add_node("respond", generate_response)
+
+    # Define the flow
+    graph.add_edge(START, "process")
+    graph.add_edge("process", "respond")
+    graph.add_edge("respond", END)
+
+    # Compile the graph
+    app = graph.compile()
+    ```
+
+    The graph flow:
+    1. START → process: Begin with processing
+    2. process → respond: Generate response
+    3. respond → END: Finish execution
+  </Step>
+
+  <Step title="Run the agent">
+    Execute your agent with different inputs.
+
+    ```python
+    # First run
+    result = app.invoke({
+        "text": "hello world",
+        "count": 0
+    })
+    print(result)
+    # Output: {'text': 'Processed: HELLO WORLD (processed 1 times)', 'count': 1}
+
+    # Second run
+    result = app.invoke({
+        "text": "langgraph is awesome",
+        "count": 0
+    })
+    print(result)
+    # Output: {'text': 'Processed: LANGGRAPH IS AWESOME (processed 1 times)', 'count': 1}
+    ```
+
+    Each invocation:
+    - Starts with fresh state
+    - Flows through all nodes
+    - Returns final state
+  </Step>
+
+  <Step title="Complete example">
+    Here's the full working code:
+
+    ```python
+    from typing_extensions import TypedDict
+    from langgraph.graph import StateGraph, START, END
+
+    # Define state
+    class AgentState(TypedDict):
+        text: str
+        count: int
+
+    # Define nodes
+    def process_input(state: AgentState) -> dict:
+        text = state["text"]
+        count = state.get("count", 0)
+        processed_text = f"Processed: {text.upper()}"
+        return {"text": processed_text, "count": count + 1}
+
+    def generate_response(state: AgentState) -> dict:
+        text = state["text"]
+        count = state["count"]
+        response = f"{text} (processed {count} times)"
+        return {"text": response}
+
+    # Build graph
+    graph = StateGraph(AgentState)
+    graph.add_node("process", process_input)
+    graph.add_node("respond", generate_response)
+    graph.add_edge(START, "process")
+    graph.add_edge("process", "respond")
+    graph.add_edge("respond", END)
+
+    # Compile and run
+    app = graph.compile()
+    result = app.invoke({"text": "hello world", "count": 0})
+    print(result)
+    ```
+
+    Save this as `simple_agent.py` and run:
+
+    ```bash
+    python simple_agent.py
+    ```
+  </Step>
+</Steps>
+
+## Expected output
+
+When you run the complete example, you should see:
+
+```
+{'text': 'Processed: HELLO WORLD (processed 1 times)', 'count': 1}
+```
+
+## Key concepts
+
+- **State**: A TypedDict that holds all data flowing through the graph
+- **Nodes**: Functions that process state and return updates
+- **Edges**: Connections that define execution flow
+- **Graph**: The compiled workflow that orchestrates everything
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Build a Chatbot" icon="comments" href="/tutorials/chatbot">
+    Add conversation memory and message handling
+  </Card>
+  
+  <Card title="Tool Calling" icon="wrench" href="/tutorials/tool-calling">
+    Give your agent the ability to use tools
+  </Card>
+</CardGroup>
+
+<Note>
+  This simple agent demonstrates the core concepts of LangGraph. All more complex agents build on these same principles.
+</Note>

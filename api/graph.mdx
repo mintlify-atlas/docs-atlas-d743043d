@@ -1,0 +1,229 @@
+---
+title: Graph Module
+description: Core graph module exports for building LangGraph applications
+---
+
+The `langgraph.graph` module provides the primary interfaces for building stateful, multi-actor applications with LangGraph. This module exports the core graph building classes and utilities.
+
+## Module Exports
+
+The graph module exports the following classes and constants:
+
+- **[StateGraph](#stategraph)** - Main graph builder class for state-based graphs
+- **[MessageGraph](#messagegraph)** - Specialized graph for message-based workflows (deprecated)
+- **[MessagesState](#messagesstate)** - TypedDict for message-based state
+- **[add_messages](#add_messages)** - Reducer function for merging message lists
+- **[START](#start)** - Constant for the graph entry point
+- **[END](#end)** - Constant for the graph exit point
+
+**Defined in:** `langgraph/graph/__init__.py`
+
+## Core Classes
+
+### StateGraph
+
+<ParamField path="StateGraph" type="class">
+  A graph whose nodes communicate by reading and writing to a shared state.
+
+  The signature of each node is `State -> Partial<State>`. Each state key can optionally be annotated with a reducer function that will be used to aggregate the values of that key received from multiple nodes.
+
+  **Warning:** `StateGraph` is a builder class and cannot be used directly for execution. You must first call `.compile()` to create an executable graph that supports methods like `invoke()`, `stream()`, `astream()`, and `ainvoke()`.
+
+  See the [StateGraph reference](/api/state-graph) for detailed documentation.
+
+  **Defined in:** `langgraph/graph/state.py:113`
+</ParamField>
+
+### MessageGraph
+
+<ParamField path="MessageGraph" type="class">
+  A StateGraph where every node receives a list of messages as input and returns one or more messages as output.
+
+  **Deprecated:** MessageGraph is deprecated in LangGraph v1.0.0 and will be removed in v2.0.0. Please use `StateGraph` with a `messages` key instead.
+
+  MessageGraph is a subclass of StateGraph whose entire state is a single, append-only list of messages. Each node takes a list of messages as input and returns zero or more messages as output.
+
+  See the [MessageGraph reference](/api/message-graph) for detailed documentation.
+
+  **Defined in:** `langgraph/graph/message.py:251`
+</ParamField>
+
+### MessagesState
+
+<ParamField path="MessagesState" type="TypedDict">
+  A pre-built TypedDict for message-based state.
+
+  Provides a convenient state schema with a single `messages` key that uses the `add_messages` reducer.
+
+  **Defined in:** `langgraph/graph/message.py:307`
+</ParamField>
+
+#### Attributes
+
+<ParamField path="messages" type="Annotated[list[AnyMessage], add_messages]">
+  List of messages with automatic merging via the `add_messages` reducer.
+</ParamField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import MessagesState, StateGraph, START
+from langchain_core.messages import HumanMessage, AIMessage
+
+# Use MessagesState as your graph's state schema
+builder = StateGraph(MessagesState)
+
+def chatbot(state: MessagesState):
+    # Access messages from state
+    user_msg = state["messages"][-1].content
+    return {"messages": [AIMessage(content=f"You said: {user_msg}")]}
+
+builder.add_node("chatbot", chatbot)
+builder.add_edge(START, "chatbot")
+graph = builder.compile()
+
+result = graph.invoke({"messages": [HumanMessage(content="Hello")]})
+# {'messages': [HumanMessage(content='Hello'), AIMessage(content='You said: Hello')]}
+```
+
+## Functions
+
+### add_messages
+
+<ParamField path="add_messages(left, right, *, format=None)" type="function">
+  Merges two lists of messages, updating existing messages by ID.
+
+  By default, this ensures the state is "append-only", unless the new message has the same ID as an existing message. When messages have matching IDs, the new message replaces the old one.
+
+  **Defined in:** `langgraph/graph/message.py:61`
+</ParamField>
+
+#### Parameters
+
+<ParamField path="left" type="Messages">
+  The base list of messages.
+</ParamField>
+
+<ParamField path="right" type="Messages">
+  The list of messages (or single message) to merge into the base list.
+</ParamField>
+
+<ParamField path="format" type="Literal['langchain-openai'] | None" default="None">
+  The format to return messages in. If `None`, messages are returned as-is. If `'langchain-openai'`, messages are formatted to match OpenAI message format.
+
+  Requires `langchain-core>=0.3.11` to use this feature.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="Messages">
+  A new list of messages with the messages from `right` merged into `left`. If a message in `right` has the same ID as a message in `left`, the message from `right` replaces the message from `left`.
+</ResponseField>
+
+#### Usage Example
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, add_messages, START
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+
+def chatbot_node(state: State):
+    return {"messages": [("assistant", "Hello! How can I help you?")]}
+
+builder = StateGraph(State)
+builder.add_node("chatbot", chatbot_node)
+builder.add_edge(START, "chatbot")
+graph = builder.compile()
+
+result = graph.invoke({"messages": [("user", "Hi there")]})
+# {'messages': [HumanMessage(content='Hi there'), AIMessage(content='Hello! How can I help you?')]}
+```
+
+## Constants
+
+### START
+
+<ParamField path="START" type="str">
+  The first (maybe virtual) node in graph-style Pregel.
+
+  Use this constant to add edges from the graph entry point to your first node(s). Equivalent to the string `"__start__"`.
+
+  **Defined in:** `langgraph/constants.py:30`
+</ParamField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    value: int
+
+builder = StateGraph(State)
+builder.add_node("process", lambda state: {"value": state["value"] * 2})
+
+# Add edge from START to the first node
+builder.add_edge(START, "process")
+builder.add_edge("process", END)
+
+graph = builder.compile()
+result = graph.invoke({"value": 5})
+# {'value': 10}
+```
+
+### END
+
+<ParamField path="END" type="str">
+  The last (maybe virtual) node in graph-style Pregel.
+
+  Use this constant to mark terminal nodes in your graph. When execution reaches a node with an edge to `END`, the graph will cease execution. Equivalent to the string `"__end__"`.
+
+  **Defined in:** `langgraph/constants.py:28`
+</ParamField>
+
+#### Usage Example
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    done: bool
+    value: int
+
+def process(state: State):
+    return {"value": state["value"] + 1, "done": True}
+
+builder = StateGraph(State)
+builder.add_node("process", process)
+builder.add_edge(START, "process")
+
+# Mark process as a terminal node
+builder.add_edge("process", END)
+
+graph = builder.compile()
+result = graph.invoke({"value": 0, "done": False})
+# {'value': 1, 'done': True}
+```
+
+## Import Paths
+
+```python
+# Import the main graph classes
+from langgraph.graph import StateGraph, MessageGraph, MessagesState
+
+# Import utility functions
+from langgraph.graph import add_messages
+
+# Import constants
+from langgraph.graph import START, END
+
+# Alternative: import from submodules
+from langgraph.graph.state import StateGraph
+from langgraph.graph.message import MessageGraph, MessagesState, add_messages
+from langgraph.constants import START, END
+```

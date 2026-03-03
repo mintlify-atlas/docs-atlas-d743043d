@@ -1,0 +1,526 @@
+---
+title: "Multi-Agent Coordination"
+description: "Build systems with multiple specialized agents working together"
+---
+
+In this tutorial, you'll build a multi-agent system where specialized agents collaborate to solve complex tasks that require different expertise.
+
+## What you'll build
+
+A multi-agent system with:
+- Multiple specialized agents with different skills
+- A supervisor agent that coordinates work
+- State sharing between agents
+- Handoffs between agents
+
+## Use cases
+
+Multi-agent systems excel at:
+- Complex workflows requiring different expertise
+- Parallel task execution
+- Specialized domain knowledge
+- Scalable agent architectures
+
+## Prerequisites
+
+Install required packages:
+
+```bash
+pip install -U langgraph langchain-openai langchain-core
+```
+
+Set your API key:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+```
+
+## Tutorial
+
+<Steps>
+  <Step title="Define the multi-agent state">
+    Create state that tracks work across multiple agents.
+
+    ```python
+    from typing import Annotated, Sequence, Literal
+    from langchain_core.messages import BaseMessage
+    from langgraph.graph import StateGraph, START, END, add_messages
+    from typing_extensions import TypedDict
+
+    class MultiAgentState(TypedDict):
+        """State shared across all agents."""
+        messages: Annotated[Sequence[BaseMessage], add_messages]
+        current_agent: str
+        task_results: dict[str, str]
+        next_agent: str
+    ```
+  </Step>
+
+  <Step title="Create specialized agent tools">
+    Define tools for each specialized agent.
+
+    ```python
+    from langchain_core.tools import tool
+
+    # Research Agent Tools
+    @tool
+    def search_information(query: str) -> str:
+        """Search for information on a topic.
+        
+        Args:
+            query: The search query
+        """
+        # Mock implementation
+        return f"Research findings: {query} is a complex topic with multiple facets..."
+
+    @tool
+    def summarize_research(text: str) -> str:
+        """Summarize research findings.
+        
+        Args:
+            text: Text to summarize
+        """
+        words = text.split()[:20]
+        return f"Summary: {' '.join(words)}..."
+
+    # Writer Agent Tools
+    @tool
+    def draft_content(topic: str, style: str = "professional") -> str:
+        """Draft content on a topic.
+        
+        Args:
+            topic: Topic to write about
+            style: Writing style (professional, casual, technical)
+        """
+        return f"Draft ({style} style): Content about {topic}..."
+
+    @tool
+    def edit_content(content: str) -> str:
+        """Edit and improve content.
+        
+        Args:
+            content: Content to edit
+        """
+        return f"Edited: {content} [improved grammar and clarity]"
+
+    # Analyst Agent Tools
+    @tool
+    def analyze_data(data: str) -> str:
+        """Analyze data and provide insights.
+        
+        Args:
+            data: Data to analyze
+        """
+        return f"Analysis: {data} shows interesting patterns..."
+
+    @tool
+    def create_report(analysis: str) -> str:
+        """Create a report from analysis.
+        
+        Args:
+            analysis: Analysis to report on
+        """
+        return f"Report: {analysis} [formatted as executive summary]"
+
+    research_tools = [search_information, summarize_research]
+    writer_tools = [draft_content, edit_content]
+    analyst_tools = [analyze_data, create_report]
+    ```
+  </Step>
+
+  <Step title="Create specialized agent nodes">
+    Build individual agents with different capabilities.
+
+    ```python
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage
+
+    # Initialize models for different agents
+    model = ChatOpenAI(model="gpt-4", temperature=0.7)
+
+    def create_agent_node(name: str, system_prompt: str, tools: list):
+        """Factory function to create specialized agents."""
+        model_with_tools = model.bind_tools(tools)
+        
+        def agent_node(state: MultiAgentState) -> dict:
+            messages = state["messages"]
+            
+            # Add agent-specific system prompt
+            full_messages = [
+                SystemMessage(content=system_prompt),
+                *messages
+            ]
+            
+            response = model_with_tools.invoke(full_messages)
+            
+            # Update task results
+            task_results = state.get("task_results", {})
+            task_results[name] = response.content
+            
+            return {
+                "messages": [response],
+                "current_agent": name,
+                "task_results": task_results
+            }
+        
+        return agent_node
+
+    # Create specialized agents
+    researcher = create_agent_node(
+        "researcher",
+        "You are a research specialist. Search for information and summarize findings.",
+        research_tools
+    )
+
+    writer = create_agent_node(
+        "writer",
+        "You are a content writer. Create well-written, engaging content based on research.",
+        writer_tools
+    )
+
+    analyst = create_agent_node(
+        "analyst",
+        "You are a data analyst. Analyze information and create insightful reports.",
+        analyst_tools
+    )
+    ```
+  </Step>
+
+  <Step title="Create supervisor agent">
+    Build a supervisor that routes work to specialized agents.
+
+    ```python
+    from langchain_core.pydantic_v1 import BaseModel, Field
+
+    class RouteDecision(BaseModel):
+        """Decision on which agent to route to next."""
+        next_agent: Literal["researcher", "writer", "analyst", "finish"] = Field(
+            description="The next agent to handle the task, or 'finish' if complete"
+        )
+        reasoning: str = Field(
+            description="Brief explanation of why this agent was chosen"
+        )
+
+    SUPERVISOR_PROMPT = """You are a supervisor managing a team of specialized agents:
+
+    1. RESEARCHER: Searches for information and summarizes findings
+    2. WRITER: Creates written content based on research
+    3. ANALYST: Analyzes data and creates reports
+
+    Your job is to route tasks to the appropriate agent based on the current state.
+    Review the conversation history and task results to decide the next step.
+
+    Choose 'finish' when the task is complete.
+    """
+
+    supervisor_model = model.with_structured_output(RouteDecision)
+
+    def supervisor_node(state: MultiAgentState) -> dict:
+        """Supervisor that routes to specialized agents."""
+        messages = state["messages"]
+        task_results = state.get("task_results", {})
+        
+        # Build context for supervisor
+        context = f"""Current state:
+        - Completed tasks: {list(task_results.keys())}
+        - Last agent: {state.get('current_agent', 'none')}
+        
+        Decide which agent should handle the next step.
+        """
+        
+        full_messages = [
+            SystemMessage(content=SUPERVISOR_PROMPT),
+            HumanMessage(content=context),
+            *messages
+        ]
+        
+        decision = supervisor_model.invoke(full_messages)
+        
+        return {
+            "next_agent": decision.next_agent,
+            "messages": [HumanMessage(content=f"Routing to {decision.next_agent}: {decision.reasoning}")]
+        }
+    ```
+  </Step>
+
+  <Step title="Build the multi-agent graph">
+    Assemble the complete multi-agent system.
+
+    ```python
+    from langgraph.prebuilt import ToolNode
+
+    # Initialize graph
+    graph = StateGraph(MultiAgentState)
+
+    # Add supervisor
+    graph.add_node("supervisor", supervisor_node)
+
+    # Add specialized agents
+    graph.add_node("researcher", researcher)
+    graph.add_node("researcher_tools", ToolNode(research_tools))
+
+    graph.add_node("writer", writer)
+    graph.add_node("writer_tools", ToolNode(writer_tools))
+
+    graph.add_node("analyst", analyst)
+    graph.add_node("analyst_tools", ToolNode(analyst_tools))
+
+    # Start with supervisor
+    graph.add_edge(START, "supervisor")
+
+    # Route from supervisor to agents
+    def route_supervisor(state: MultiAgentState) -> str:
+        next_agent = state.get("next_agent", "finish")
+        if next_agent == "finish":
+            return "end"
+        return next_agent
+
+    graph.add_conditional_edges(
+        "supervisor",
+        route_supervisor,
+        {
+            "researcher": "researcher",
+            "writer": "writer",
+            "analyst": "analyst",
+            "end": END
+        }
+    )
+
+    # Tool execution for each agent
+    def should_use_tools(state: MultiAgentState) -> str:
+        last_message = state["messages"][-1]
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            return "tools"
+        return "supervisor"
+
+    # Researcher flow
+    graph.add_conditional_edges(
+        "researcher",
+        should_use_tools,
+        {"tools": "researcher_tools", "supervisor": "supervisor"}
+    )
+    graph.add_edge("researcher_tools", "researcher")
+
+    # Writer flow
+    graph.add_conditional_edges(
+        "writer",
+        should_use_tools,
+        {"tools": "writer_tools", "supervisor": "supervisor"}
+    )
+    graph.add_edge("writer_tools", "writer")
+
+    # Analyst flow
+    graph.add_conditional_edges(
+        "analyst",
+        should_use_tools,
+        {"tools": "analyst_tools", "supervisor": "supervisor"}
+    )
+    graph.add_edge("analyst_tools", "analyst")
+
+    # Compile
+    app = graph.compile()
+    ```
+  </Step>
+
+  <Step title="Run the multi-agent system">
+    Execute complex tasks with agent coordination.
+
+    ```python
+    from langchain_core.messages import HumanMessage
+
+    # Complex task requiring multiple agents
+    result = app.invoke({
+        "messages": [
+            HumanMessage(
+                content="""Research the benefits of LangGraph, 
+                write a brief article about it, and provide 
+                an analysis of its key features."""
+            )
+        ],
+        "task_results": {},
+        "current_agent": "",
+        "next_agent": ""
+    })
+
+    # View results from each agent
+    print("\nTask Results:")
+    for agent, result in result["task_results"].items():
+        print(f"\n{agent.upper()}:")
+        print(result)
+        print("-" * 50)
+
+    print(f"\nTotal messages: {len(result['messages'])}")
+    print(f"Final answer: {result['messages'][-1].content}")
+    ```
+  </Step>
+
+  <Step title="Complete example">
+    Here's a simplified complete example:
+
+    ```python
+    from typing import Annotated, Sequence, Literal
+    from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+    from langchain_core.tools import tool
+    from langchain_openai import ChatOpenAI
+    from langgraph.graph import StateGraph, START, END, add_messages
+    from typing_extensions import TypedDict
+
+    # State
+    class MultiAgentState(TypedDict):
+        messages: Annotated[Sequence[BaseMessage], add_messages]
+        next_agent: str
+        task_results: dict
+
+    # Tools
+    @tool
+    def research(topic: str) -> str:
+        """Research a topic."""
+        return f"Research on {topic}: comprehensive findings..."
+
+    @tool
+    def write(topic: str) -> str:
+        """Write content."""
+        return f"Article about {topic}: well-written content..."
+
+    # Model
+    model = ChatOpenAI(model="gpt-4", temperature=0)
+
+    # Agents
+    def researcher(state: MultiAgentState) -> dict:
+        result = research.invoke({"topic": "LangGraph"})
+        results = state.get("task_results", {})
+        results["research"] = result
+        return {"task_results": results, "next_agent": "writer"}
+
+    def writer(state: MultiAgentState) -> dict:
+        research_data = state["task_results"].get("research", "")
+        result = write.invoke({"topic": "LangGraph"})
+        results = state["task_results"]
+        results["article"] = result
+        return {"task_results": results, "next_agent": "finish"}
+
+    # Graph
+    graph = StateGraph(MultiAgentState)
+    graph.add_node("researcher", researcher)
+    graph.add_node("writer", writer)
+    graph.add_edge(START, "researcher")
+    graph.add_conditional_edges(
+        "researcher",
+        lambda s: s["next_agent"],
+        {"writer": "writer"}
+    )
+    graph.add_conditional_edges(
+        "writer",
+        lambda s: "end" if s["next_agent"] == "finish" else s["next_agent"],
+        {"end": END}
+    )
+    app = graph.compile()
+
+    # Run
+    result = app.invoke({
+        "messages": [HumanMessage(content="Create article about LangGraph")],
+        "task_results": {},
+        "next_agent": ""
+    })
+    print(result["task_results"])
+    ```
+  </Step>
+</Steps>
+
+## Expected output
+
+```
+Task Results:
+
+RESEARCHER:
+Research on LangGraph: comprehensive findings...
+--------------------------------------------------
+
+ARTICLE:
+Article about LangGraph: well-written content...
+--------------------------------------------------
+
+Total messages: 8
+Final answer: Task completed successfully with contributions from researcher and writer.
+```
+
+## Key concepts
+
+- **Specialized Agents**: Each agent has specific tools and expertise
+- **Supervisor Pattern**: Central coordinator routes work
+- **State Sharing**: All agents access shared state
+- **Task Results**: Track outputs from each agent
+- **Agent Handoffs**: Smooth transitions between agents
+
+## Architecture patterns
+
+<AccordionGroup>
+  <Accordion title="Hierarchical Teams">
+    ```python
+    # Team structure:
+    # Supervisor → Team Lead → Workers
+    
+    class Team:
+        def __init__(self, lead, workers):
+            self.lead = lead
+            self.workers = workers
+    
+    research_team = Team(
+        lead="senior_researcher",
+        workers=["researcher_1", "researcher_2"]
+    )
+    ```
+  </Accordion>
+
+  <Accordion title="Parallel Execution">
+    ```python
+    # Execute multiple agents in parallel
+    from concurrent.futures import ThreadPoolExecutor
+
+    def parallel_agent_execution(state: MultiAgentState) -> dict:
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(researcher, state),
+                executor.submit(analyst, state)
+            ]
+            results = [f.result() for f in futures]
+        return merge_results(results)
+    ```
+  </Accordion>
+
+  <Accordion title="Agent Communication Protocol">
+    ```python
+    class AgentMessage(BaseModel):
+        from_agent: str
+        to_agent: str
+        message_type: Literal["request", "response", "notification"]
+        content: str
+        metadata: dict
+
+    def send_message(from_agent: str, to_agent: str, content: str):
+        return AgentMessage(
+            from_agent=from_agent,
+            to_agent=to_agent,
+            message_type="request",
+            content=content,
+            metadata={"timestamp": "..."}
+        )
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Simple Agent" icon="robot" href="/tutorials/simple-agent">
+    Review the basics of single agents
+  </Card>
+  
+  <Card title="ReAct Pattern" icon="brain" href="/tutorials/react-agent">
+    Add reasoning to individual agents
+  </Card>
+</CardGroup>
+
+<Note>
+  Multi-agent systems enable complex workflows by combining specialized agents. Start simple and add complexity as needed.
+</Note>

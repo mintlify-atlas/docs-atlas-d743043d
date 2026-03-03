@@ -1,0 +1,188 @@
+---
+title: Building Graphs
+description: Learn how to build LangGraph graphs step-by-step with nodes, edges, and state
+---
+
+LangGraph provides a flexible framework for building stateful, multi-actor applications with LLMs. This guide walks through the core concepts of building graphs.
+
+## Core Concepts
+
+A LangGraph workflow consists of:
+
+- **State**: The data structure that flows through your graph
+- **Nodes**: Functions that process the state
+- **Edges**: Connections between nodes that define the flow
+- **Graph**: The compiled workflow that orchestrates execution
+
+## Creating a Simple Graph
+
+<Steps>
+
+### Define Your State Schema
+
+Start by defining a TypedDict that represents your graph's state:
+
+```python
+from typing_extensions import TypedDict
+
+class State(TypedDict):
+    text: str
+```
+
+For message-based applications, use the built-in `MessagesState`:
+
+```python
+from langgraph.graph import MessagesState
+
+class AgentState(MessagesState):
+    # Add additional fields as needed
+    context: str
+```
+
+### Create the StateGraph
+
+Initialize a `StateGraph` with your state schema:
+
+```python
+from langgraph.graph import StateGraph
+
+graph = StateGraph(State)
+```
+
+### Add Nodes
+
+Nodes are functions that take the current state and return updates:
+
+```python
+def node_a(state: State) -> dict:
+    return {"text": state["text"] + "a"}
+
+def node_b(state: State) -> dict:
+    return {"text": state["text"] + "b"}
+
+graph.add_node("node_a", node_a)
+graph.add_node("node_b", node_b)
+```
+
+### Add Edges
+
+Connect nodes with edges to define the flow:
+
+```python
+from langgraph.graph import START, END
+
+# Direct edge from START to first node
+graph.add_edge(START, "node_a")
+
+# Sequential flow
+graph.add_edge("node_a", "node_b")
+
+# End the graph
+graph.add_edge("node_b", END)
+```
+
+### Compile the Graph
+
+Compile the graph to make it executable:
+
+```python
+app = graph.compile()
+
+# Invoke the graph
+result = app.invoke({"text": ""})
+print(result)  # {'text': 'ab'}
+```
+
+</Steps>
+
+## Conditional Edges
+
+Use conditional edges to create dynamic routing based on state:
+
+```python
+def should_continue(state: AgentState):
+    messages = state["messages"]
+    last_message = messages[-1]
+    
+    # If there are tool calls, continue to tools
+    if last_message.tool_calls:
+        return "continue"
+    # Otherwise, end
+    return "end"
+
+graph.add_conditional_edges(
+    "agent",
+    should_continue,
+    {
+        "continue": "tools",
+        "end": END,
+    },
+)
+```
+
+## Working with Tools
+
+Integrate tools using the prebuilt `ToolNode`:
+
+```python
+from langchain_community.tools.tavily_search import TavilySearchResults
+from langgraph.prebuilt import ToolNode
+
+tools = [TavilySearchResults(max_results=1)]
+tool_node = ToolNode(tools)
+
+graph.add_node("tools", tool_node)
+```
+
+## State Reducers
+
+Use `Annotated` types to define how state updates are merged:
+
+```python
+from typing import Annotated
+from collections.abc import Sequence
+from langchain_core.messages import BaseMessage
+from langgraph.graph import add_messages
+
+class AgentState(TypedDict):
+    # Messages are appended, not replaced
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+```
+
+The `add_messages` reducer intelligently merges message lists:
+- Appends new messages by default
+- Updates existing messages by ID
+- Handles message deletion with `RemoveMessage`
+
+## Multi-Agent Patterns
+
+Create graphs with multiple agents by adding nodes for each agent:
+
+```python
+def call_model(state, runtime):
+    if runtime.context.get("model") == "anthropic":
+        model = model_anth
+    else:
+        model = model_oai
+    
+    messages = state["messages"]
+    response = model.invoke(messages)
+    return {"messages": [response]}
+
+graph.add_node("agent", call_model)
+graph.add_node("tools", tool_node)
+```
+
+## Best Practices
+
+- **Keep nodes focused**: Each node should handle a single responsibility
+- **Use type hints**: Define clear state schemas for better IDE support
+- **Test incrementally**: Build and test your graph one node at a time
+- **Visualize your graph**: Use `graph.compile().get_graph().print_ascii()` to debug
+- **Handle errors gracefully**: Add error handling in your node functions
+
+## Next Steps
+
+- Learn about [State Management](/guides/state-management) for advanced state patterns
+- Explore [Persistence](/guides/persistence) to save and resume graph execution
+- Add [Interrupts](/guides/interrupts) for human-in-the-loop workflows

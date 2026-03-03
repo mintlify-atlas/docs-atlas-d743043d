@@ -1,0 +1,205 @@
+---
+title: MessageGraph
+description: Specialized graph for message-based workflows (deprecated)
+---
+
+<Warning>
+  **Deprecated:** MessageGraph is deprecated in LangGraph v1.0.0 and will be removed in v2.0.0. Please use [StateGraph](/api/state-graph) with a `messages` key instead.
+</Warning>
+
+The `MessageGraph` class is a specialized version of `StateGraph` where the entire state is a single, append-only list of messages.
+
+**Defined in:** `langgraph/graph/message.py:251`
+
+## Overview
+
+`MessageGraph` is a subclass of `StateGraph` whose entire state is a single list of messages. Each node in a MessageGraph takes a list of messages as input and returns zero or more messages as output. The `add_messages` function is used to merge the output messages from each node into the existing list of messages in the graph's state.
+
+## Constructor
+
+```python
+MessageGraph()
+```
+
+Create a new MessageGraph instance. The state schema is automatically set to `Annotated[list[AnyMessage], add_messages]`.
+
+### Usage Example
+
+```python
+from langgraph.graph.message import MessageGraph
+from langchain_core.messages import HumanMessage, AIMessage
+
+builder = MessageGraph()
+
+def chatbot(state: list):
+    # state is a list of messages
+    return [AIMessage(content="Hello!")]
+
+builder.add_node("chatbot", chatbot)
+builder.set_entry_point("chatbot")
+builder.set_finish_point("chatbot")
+
+graph = builder.compile()
+result = graph.invoke([HumanMessage(content="Hi there.")])
+# [
+#   HumanMessage(content="Hi there.", id='...'),
+#   AIMessage(content="Hello!", id='...')
+# ]
+```
+
+## Migration Guide
+
+Instead of using `MessageGraph`, use `StateGraph` with `MessagesState` or a custom state that includes a `messages` field:
+
+### Before (MessageGraph)
+
+```python
+from langgraph.graph.message import MessageGraph
+from langchain_core.messages import AIMessage
+
+builder = MessageGraph()
+
+def chatbot(state: list):
+    return [AIMessage(content="Hello!")]
+
+builder.add_node("chatbot", chatbot)
+builder.set_entry_point("chatbot")
+builder.set_finish_point("chatbot")
+graph = builder.compile()
+
+result = graph.invoke([("user", "Hi there.")])
+```
+
+### After (StateGraph with MessagesState)
+
+```python
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langchain_core.messages import AIMessage
+
+builder = StateGraph(MessagesState)
+
+def chatbot(state: MessagesState):
+    return {"messages": [AIMessage(content="Hello!")]}
+
+builder.add_node("chatbot", chatbot)
+builder.add_edge(START, "chatbot")
+builder.add_edge("chatbot", END)
+graph = builder.compile()
+
+result = graph.invoke({"messages": [("user", "Hi there.")]})
+```
+
+### Alternative: Custom State
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, add_messages, START, END
+from langchain_core.messages import AnyMessage, AIMessage
+
+class State(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+    # Add other fields as needed
+    user_id: str
+
+builder = StateGraph(State)
+
+def chatbot(state: State):
+    user_id = state["user_id"]
+    return {"messages": [AIMessage(content=f"Hello, user {user_id}!")]}
+
+builder.add_node("chatbot", chatbot)
+builder.add_edge(START, "chatbot")
+builder.add_edge("chatbot", END)
+graph = builder.compile()
+
+result = graph.invoke({
+    "messages": [("user", "Hi there.")],
+    "user_id": "123"
+})
+```
+
+## Methods
+
+`MessageGraph` inherits all methods from `StateGraph`. See the [StateGraph reference](/api/state-graph) for detailed documentation of available methods:
+
+- `add_node()` - Add a node to the graph
+- `add_edge()` - Add an edge between nodes
+- `add_conditional_edges()` - Add conditional routing
+- `set_entry_point()` - Set the starting node
+- `set_finish_point()` - Set the ending node
+- `compile()` - Compile into an executable graph
+
+## Examples
+
+### Basic Message Workflow
+
+```python
+from langgraph.graph.message import MessageGraph
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+
+builder = MessageGraph()
+
+builder.add_node(
+    "chatbot",
+    lambda state: [
+        AIMessage(
+            content="Hello!",
+            tool_calls=[{"name": "search", "id": "123", "args": {"query": "X"}}],
+        )
+    ],
+)
+
+builder.add_node(
+    "search",
+    lambda state: [ToolMessage(content="Searching...", tool_call_id="123")]
+)
+
+builder.set_entry_point("chatbot")
+builder.add_edge("chatbot", "search")
+builder.set_finish_point("search")
+
+graph = builder.compile()
+
+result = graph.invoke([HumanMessage(content="Hi there. Can you search for X?")])
+print(result)
+# [
+#   HumanMessage(content="Hi there. Can you search for X?", id='...'),
+#   AIMessage(content="Hello!", tool_calls=[...], id='...'),
+#   ToolMessage(content="Searching...", tool_call_id="123", id='...')
+# ]
+```
+
+### With Conditional Edges
+
+```python
+from langgraph.graph.message import MessageGraph
+from langchain_core.messages import HumanMessage, AIMessage
+
+builder = MessageGraph()
+
+def should_continue(state: list) -> str:
+    last_message = state[-1]
+    if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+        return "tools"
+    return "end"
+
+builder.add_node("agent", lambda state: [AIMessage(content="Processing...")])
+builder.add_node("tools", lambda state: [AIMessage(content="Tool result")])
+
+builder.set_entry_point("agent")
+builder.add_conditional_edges(
+    "agent",
+    should_continue,
+    {"tools": "tools", "end": "__end__"}
+)
+builder.add_edge("tools", "agent")
+
+graph = builder.compile()
+```
+
+## See Also
+
+- [StateGraph](/api/state-graph) - The recommended replacement for MessageGraph
+- [MessagesState](/api/graph#messagesstate) - Pre-built state schema for message-based graphs
+- [add_messages](/api/graph#add_messages) - Message reducer function

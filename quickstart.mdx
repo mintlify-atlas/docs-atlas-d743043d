@@ -1,80 +1,251 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Build your first LangGraph application in under 5 minutes
 ---
 
-## Get started in three steps
+# Quickstart
 
-Get your documentation site running locally and make your first customization.
+This guide will get you up and running with LangGraph in under 5 minutes. You'll create a simple stateful workflow that demonstrates the core concepts of graphs, nodes, edges, and state.
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+Before you begin, make sure you have:
 
-### Step 2: Deploy your changes
+- Python 3.10 or higher installed
+- Basic familiarity with Python and type hints
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Tip>
+If you haven't installed LangGraph yet, check out the [Installation Guide](/installation).
+</Tip>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Your First LangGraph Application
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Let's build a simple workflow that processes text through multiple nodes.
 
-### Step 3: Go live
+<Steps>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+### Define Your State
 
-## Next steps
+First, define the state schema using a TypedDict. The state represents the data that flows through your graph:
 
-Now that you have your docs running, explore these key features:
+```python
+from typing_extensions import TypedDict
 
-<CardGroup cols={2}>
+class State(TypedDict):
+    text: str
+```
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+### Create Node Functions
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+Nodes are the building blocks of your graph. Each node is a function that receives the current state and returns an update:
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+```python
+def node_a(state: State) -> dict:
+    return {"text": state["text"] + "a"}
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+def node_b(state: State) -> dict:
+    return {"text": state["text"] + "b"}
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+Node functions can return a partial state update. LangGraph automatically merges the update with the existing state.
 </Note>
+
+### Build the Graph
+
+Now create a StateGraph and add your nodes and edges:
+
+```python
+from langgraph.graph import START, StateGraph
+
+graph = StateGraph(State)
+graph.add_node("node_a", node_a)
+graph.add_node("node_b", node_b)
+graph.add_edge(START, "node_a")
+graph.add_edge("node_a", "node_b")
+```
+
+Here's what's happening:
+- `StateGraph(State)` creates a graph with your state schema
+- `add_node()` registers functions as nodes in the graph
+- `add_edge()` defines the execution flow between nodes
+- `START` is a special constant representing the entry point
+
+### Compile and Run
+
+Compile the graph and execute it with initial state:
+
+```python
+app = graph.compile()
+
+result = app.invoke({"text": ""})
+print(result)
+```
+
+</Steps>
+
+## Complete Example
+
+Here's the full code in one place:
+
+```python
+from langgraph.graph import START, StateGraph
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    text: str
+
+
+def node_a(state: State) -> dict:
+    return {"text": state["text"] + "a"}
+
+
+def node_b(state: State) -> dict:
+    return {"text": state["text"] + "b"}
+
+
+graph = StateGraph(State)
+graph.add_node("node_a", node_a)
+graph.add_node("node_b", node_b)
+graph.add_edge(START, "node_a")
+graph.add_edge("node_a", "node_b")
+
+app = graph.compile()
+
+print(app.invoke({"text": ""}))
+# Output: {'text': 'ab'}
+```
+
+## Expected Output
+
+When you run this code, you'll see:
+
+```python
+{'text': 'ab'}
+```
+
+The workflow:
+1. Starts with an empty string `""`
+2. `node_a` appends `"a"` → `"a"`
+3. `node_b` appends `"b"` → `"ab"`
+
+## Understanding the Flow
+
+<Steps>
+
+### State Initialization
+The graph begins with the initial state you provide: `{"text": ""}`
+
+### Node Execution
+Each node receives the current state and returns updates. LangGraph automatically merges these updates.
+
+### Sequential Processing
+Edges determine execution order. In this example, `node_a` always runs before `node_b`.
+
+### Final State
+The `invoke()` method returns the final state after all nodes complete.
+
+</Steps>
+
+## Building a Conditional Workflow
+
+Let's extend the example with conditional routing:
+
+```python
+from langgraph.graph import START, END, StateGraph
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    text: str
+    count: int
+
+
+def increment(state: State) -> dict:
+    return {"count": state["count"] + 1}
+
+
+def should_continue(state: State) -> str:
+    if state["count"] < 3:
+        return "increment"
+    return END
+
+
+graph = StateGraph(State)
+graph.add_node("increment", increment)
+graph.add_edge(START, "increment")
+graph.add_conditional_edges("increment", should_continue)
+
+app = graph.compile()
+
+result = app.invoke({"text": "hello", "count": 0})
+print(result)
+# Output: {'text': 'hello', 'count': 3}
+```
+
+This creates a loop that increments `count` until it reaches 3.
+
+## Next Steps
+
+Now that you've built your first LangGraph application, explore more advanced features:
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/concepts">
+    Learn about state management, reducers, and graph patterns
+  </Card>
+  <Card title="Checkpointing" icon="database" href="https://docs.langchain.com/oss/python/langgraph/durable-execution">
+    Add persistence and enable time-travel debugging
+  </Card>
+  <Card title="Human-in-the-Loop" icon="user" href="https://docs.langchain.com/oss/python/langgraph/interrupts">
+    Pause execution for human approval or input
+  </Card>
+  <Card title="Examples" icon="flask" href="https://docs.langchain.com/oss/python/langgraph/agentic-rag">
+    Explore real-world LangGraph applications
+  </Card>
+</CardGroup>
+
+<Tip>
+Want to build AI agents quickly? Check out [`create_react_agent`](https://docs.langchain.com/oss/python/langchain/agents) for a high-level API built on LangGraph.
+</Tip>
+
+## Troubleshooting
+
+### Import Errors
+
+If you see `ModuleNotFoundError`, ensure LangGraph is installed:
+
+```bash
+pip install langgraph
+```
+
+### Type Errors
+
+Make sure you're using `typing_extensions.TypedDict` (not `typing.TypedDict`) for Python 3.10 compatibility:
+
+```python
+from typing_extensions import TypedDict
+```
+
+### State Not Updating
+
+Remember that node functions should return dictionaries with the keys to update:
+
+```python
+# Correct
+def my_node(state: State) -> dict:
+    return {"text": "new value"}
+
+# Incorrect - returns the full state
+def my_node(state: State) -> State:
+    state["text"] = "new value"
+    return state
+```
+
+## Get Help
+
+Need assistance? Here are some resources:
+
+- [LangChain Forum](https://forum.langchain.com/) - Community Q&A
+- [GitHub Issues](https://github.com/langchain-ai/langgraph/issues) - Bug reports and feature requests
+- [LangChain Academy](https://academy.langchain.com/courses/intro-to-langgraph) - Free structured course

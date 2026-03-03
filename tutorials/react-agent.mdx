@@ -1,0 +1,472 @@
+---
+title: "ReAct Agent Pattern"
+description: "Build an agent that reasons and acts iteratively"
+---
+
+In this tutorial, you'll implement the ReAct (Reasoning and Acting) pattern, where agents alternate between reasoning about what to do and taking actions to accomplish goals.
+
+## What you'll build
+
+A ReAct agent that:
+- Reasons about the task at hand
+- Plans which tools to use
+- Executes actions iteratively
+- Reflects on results before responding
+
+## What is ReAct?
+
+ReAct combines reasoning traces with action execution:
+
+1. **Thought**: Agent reasons about the current situation
+2. **Action**: Agent decides on and executes a tool
+3. **Observation**: Agent observes the result
+4. **Repeat**: Process continues until task is solved
+
+## Prerequisites
+
+Install required packages:
+
+```bash
+pip install -U langgraph langchain-openai langchain-community
+```
+
+Set your API key:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+```
+
+## Tutorial
+
+<Steps>
+  <Step title="Define state with reasoning">
+    Create state that tracks both messages and reasoning steps.
+
+    ```python
+    from typing import Annotated, Sequence
+    from langchain_core.messages import BaseMessage, SystemMessage
+    from langgraph.graph import StateGraph, START, END, add_messages
+    from typing_extensions import TypedDict
+
+    class ReactState(TypedDict):
+        """State for ReAct agent."""
+        messages: Annotated[Sequence[BaseMessage], add_messages]
+        iterations: int
+    ```
+  </Step>
+
+  <Step title="Create reasoning tools">
+    Define tools for the agent to use during reasoning.
+
+    ```python
+    from langchain_core.tools import tool
+
+    @tool
+    def search_wikipedia(query: str) -> str:
+        """Search Wikipedia for information.
+        
+        Args:
+            query: The search query
+            
+        Returns:
+            Summary from Wikipedia
+        """
+        # Mock implementation - replace with real Wikipedia API
+        wiki_data = {
+            "python": "Python is a high-level programming language known for its simplicity...",
+            "langgraph": "LangGraph is a framework for building stateful, multi-actor applications...",
+            "ai": "Artificial Intelligence (AI) is the simulation of human intelligence..."
+        }
+        query_lower = query.lower()
+        for key, value in wiki_data.items():
+            if key in query_lower:
+                return value
+        return f"No Wikipedia article found for '{query}'"
+
+    @tool
+    def calculate_math(expression: str) -> str:
+        """Evaluate a mathematical expression.
+        
+        Args:
+            expression: Math expression to evaluate
+            
+        Returns:
+            The calculated result
+        """
+        try:
+            result = eval(expression)
+            return f"Result: {result}"
+        except Exception as e:
+            return f"Error calculating: {str(e)}"
+
+    @tool
+    def analyze_text(text: str) -> str:
+        """Analyze text and provide statistics.
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Text statistics
+        """
+        word_count = len(text.split())
+        char_count = len(text)
+        sentence_count = text.count('.') + text.count('!') + text.count('?')
+        
+        return f"""Text Analysis:
+        - Words: {word_count}
+        - Characters: {char_count}
+        - Sentences: {sentence_count}
+        """
+
+    tools = [search_wikipedia, calculate_math, analyze_text]
+    ```
+  </Step>
+
+  <Step title="Create the ReAct agent node">
+    Build the reasoning agent with explicit prompting.
+
+    ```python
+    from langchain_openai import ChatOpenAI
+
+    # Initialize model with tools
+    model = ChatOpenAI(model="gpt-4", temperature=0)
+    model_with_tools = model.bind_tools(tools)
+
+    # ReAct system prompt
+    REACT_PROMPT = """You are a ReAct (Reasoning and Acting) agent. 
+
+    For each user query, follow this pattern:
+    1. THOUGHT: Reason about what you need to do
+    2. ACTION: Use a tool if needed
+    3. OBSERVATION: Analyze the result
+    4. Repeat until you can provide a final answer
+
+    Be explicit about your reasoning process. Think step-by-step.
+    """
+
+    def agent_node(state: ReactState) -> dict:
+        """ReAct agent that reasons before acting."""
+        messages = state["messages"]
+        iterations = state.get("iterations", 0)
+        
+        # Add system prompt for ReAct pattern
+        full_messages = [
+            SystemMessage(content=REACT_PROMPT),
+            *messages
+        ]
+        
+        # Call model
+        response = model_with_tools.invoke(full_messages)
+        
+        return {
+            "messages": [response],
+            "iterations": iterations + 1
+        }
+    ```
+  </Step>
+
+  <Step title="Create tool execution node">
+    Build the node that executes tool calls.
+
+    ```python
+    from langgraph.prebuilt import ToolNode
+
+    tool_node = ToolNode(tools)
+    ```
+  </Step>
+
+  <Step title="Add routing with iteration limit">
+    Create a router that limits iterations to prevent infinite loops.
+
+    ```python
+    MAX_ITERATIONS = 10
+
+    def should_continue(state: ReactState) -> str:
+        """Determine next step in ReAct loop."""
+        messages = state["messages"]
+        last_message = messages[-1]
+        iterations = state.get("iterations", 0)
+        
+        # Check iteration limit
+        if iterations >= MAX_ITERATIONS:
+            return "end"
+        
+        # If model wants to use tools, execute them
+        if last_message.tool_calls:
+            return "continue"
+        
+        # Otherwise, we're done
+        return "end"
+    ```
+  </Step>
+
+  <Step title="Build the ReAct graph">
+    Assemble the complete ReAct agent.
+
+    ```python
+    # Initialize graph
+    graph = StateGraph(ReactState)
+
+    # Add nodes
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", tool_node)
+
+    # Set entry point
+    graph.add_edge(START, "agent")
+
+    # Add conditional routing from agent
+    graph.add_conditional_edges(
+        "agent",
+        should_continue,
+        {
+            "continue": "tools",
+            "end": END
+        }
+    )
+
+    # After tools, return to agent for reasoning
+    graph.add_edge("tools", "agent")
+
+    # Compile
+    app = graph.compile()
+    ```
+  </Step>
+
+  <Step title="Run the ReAct agent">
+    Test the agent with reasoning-intensive queries.
+
+    ```python
+    from langchain_core.messages import HumanMessage
+
+    # Simple query
+    result = app.invoke({
+        "messages": [HumanMessage(content="What is LangGraph and calculate 10 * 15")],
+        "iterations": 0
+    })
+    print(result["messages"][-1].content)
+    # Agent will:
+    # 1. Think: Need to search for LangGraph AND do a calculation
+    # 2. Act: Use search_wikipedia tool
+    # 3. Observe: Read Wikipedia result
+    # 4. Act: Use calculate_math tool
+    # 5. Observe: Get calculation result
+    # 6. Respond: Provide comprehensive answer
+
+    # Complex multi-step query
+    result = app.invoke({
+        "messages": [HumanMessage(
+            content="""Find information about Python, then analyze 
+            the text you found, and finally calculate how many 
+            words per sentence on average."""
+        )],
+        "iterations": 0
+    })
+    print(f"Iterations used: {result['iterations']}")
+    print(result["messages"][-1].content)
+    # Agent will reason through multiple steps:
+    # 1. Search Wikipedia for Python
+    # 2. Analyze the returned text
+    # 3. Calculate words per sentence
+    # 4. Provide final answer
+    ```
+  </Step>
+
+  <Step title="Complete example with logging">
+    Here's the full code with execution logging:
+
+    ```python
+    from typing import Annotated, Sequence
+    from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+    from langchain_core.tools import tool
+    from langchain_openai import ChatOpenAI
+    from langgraph.graph import StateGraph, START, END, add_messages
+    from langgraph.prebuilt import ToolNode
+    from typing_extensions import TypedDict
+
+    # State
+    class ReactState(TypedDict):
+        messages: Annotated[Sequence[BaseMessage], add_messages]
+        iterations: int
+
+    # Tools
+    @tool
+    def search_wikipedia(query: str) -> str:
+        """Search Wikipedia for information."""
+        return f"Python is a high-level programming language known for simplicity."
+
+    @tool
+    def calculate_math(expression: str) -> str:
+        """Evaluate a mathematical expression."""
+        try:
+            return f"Result: {eval(expression)}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    tools = [search_wikipedia, calculate_math]
+
+    # Model
+    model = ChatOpenAI(model="gpt-4", temperature=0)
+    model_with_tools = model.bind_tools(tools)
+
+    REACT_PROMPT = """You are a ReAct agent. Think step-by-step:
+    1. THOUGHT: Reason about the task
+    2. ACTION: Use tools if needed
+    3. OBSERVATION: Analyze results
+    Repeat until you can answer."""
+
+    # Nodes
+    def agent_node(state: ReactState) -> dict:
+        messages = [SystemMessage(content=REACT_PROMPT), *state["messages"]]
+        response = model_with_tools.invoke(messages)
+        return {"messages": [response], "iterations": state.get("iterations", 0) + 1}
+
+    tool_node = ToolNode(tools)
+
+    # Router
+    MAX_ITERATIONS = 10
+
+    def should_continue(state: ReactState) -> str:
+        if state.get("iterations", 0) >= MAX_ITERATIONS:
+            return "end"
+        if state["messages"][-1].tool_calls:
+            return "continue"
+        return "end"
+
+    # Graph
+    graph = StateGraph(ReactState)
+    graph.add_node("agent", agent_node)
+    graph.add_node("tools", tool_node)
+    graph.add_edge(START, "agent")
+    graph.add_conditional_edges("agent", should_continue, {"continue": "tools", "end": END})
+    graph.add_edge("tools", "agent")
+    app = graph.compile()
+
+    # Run with logging
+    print("ReAct Agent Starting...\n")
+    result = app.invoke({
+        "messages": [HumanMessage(content="What is Python and what is 25 * 4?")],
+        "iterations": 0
+    })
+    print(f"\nCompleted in {result['iterations']} iterations")
+    print(f"\nFinal Answer: {result['messages'][-1].content}")
+    ```
+
+    Save as `react_agent.py` and run:
+
+    ```bash
+    python react_agent.py
+    ```
+  </Step>
+</Steps>
+
+## Expected output
+
+When running the ReAct agent:
+
+```
+ReAct Agent Starting...
+
+[Agent reasoning through steps]
+THOUGHT: I need to search for Python information and calculate 25 * 4
+ACTION: Using search_wikipedia for Python
+OBSERVATION: Found Python description
+ACTION: Using calculate_math for 25 * 4
+OBSERVATION: Result is 100
+
+Completed in 3 iterations
+
+Final Answer: Python is a high-level programming language known for simplicity. 
+The calculation 25 * 4 equals 100.
+```
+
+## Key concepts
+
+- **Reasoning Loop**: Agent thinks before acting
+- **Iteration Tracking**: Monitor and limit reasoning steps
+- **Tool Chaining**: Use multiple tools in sequence
+- **Explicit Reasoning**: Agent verbalizes its thought process
+- **Error Recovery**: Iteration limits prevent infinite loops
+
+## Comparison: ReAct vs Basic Agent
+
+| Feature | Basic Agent | ReAct Agent |
+|---------|-------------|-------------|
+| Reasoning | Implicit | Explicit |
+| Tool Use | Direct | After reasoning |
+| Iterations | Single pass | Multiple cycles |
+| Transparency | Low | High |
+| Complexity | Simple tasks | Complex tasks |
+
+## Advanced patterns
+
+<AccordionGroup>
+  <Accordion title="Add self-reflection">
+    ```python
+    @tool
+    def reflect_on_progress(current_state: str) -> str:
+        """Reflect on progress toward the goal.
+        
+        Args:
+            current_state: Description of current progress
+        """
+        return f"Reflection: Analyzing '{current_state}' - consider alternative approaches"
+
+    # Agent can now reflect on its own reasoning
+    ```
+  </Accordion>
+
+  <Accordion title="Track reasoning history">
+    ```python
+    class ReactState(TypedDict):
+        messages: Annotated[Sequence[BaseMessage], add_messages]
+        iterations: int
+        reasoning_steps: list[str]  # Track all reasoning steps
+
+    def agent_node(state: ReactState) -> dict:
+        # ... existing code ...
+        reasoning_steps = state.get("reasoning_steps", [])
+        reasoning_steps.append(f"Iteration {iterations}: {response.content[:100]}")
+        return {
+            "messages": [response],
+            "iterations": iterations + 1,
+            "reasoning_steps": reasoning_steps
+        }
+    ```
+  </Accordion>
+
+  <Accordion title="Add dynamic tool selection">
+    ```python
+    def select_tools_dynamically(query: str) -> list:
+        """Select relevant tools based on query."""
+        all_tools = [search_wikipedia, calculate_math, analyze_text]
+        
+        # Simple keyword matching
+        selected = []
+        if any(word in query.lower() for word in ["search", "find", "what is"]):
+            selected.append(search_wikipedia)
+        if any(word in query.lower() for word in ["calculate", "math", "compute"]):
+            selected.append(calculate_math)
+        if any(word in query.lower() for word in ["analyze", "statistics"]):
+            selected.append(analyze_text)
+        
+        return selected or all_tools
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Multi-Agent" icon="users" href="/tutorials/multi-agent">
+    Build systems with multiple specialized agents
+  </Card>
+  
+  <Card title="Simple Agent" icon="robot" href="/tutorials/simple-agent">
+    Review the basics of agent building
+  </Card>
+</CardGroup>
+
+<Note>
+  The ReAct pattern is powerful for complex tasks requiring multi-step reasoning. The explicit reasoning traces make agent behavior more interpretable and debuggable.
+</Note>

@@ -1,0 +1,338 @@
+---
+title: ValidationNode
+description: A node that validates tool calls without executing them, useful for structured output generation
+---
+
+Validates all tool requests from the last `AIMessage` without actually executing the tools. Useful for extraction and structured output use cases where you need to generate output that conforms to a complex schema without losing the original messages and tool IDs.
+
+<Warning>
+This class is deprecated. Please use [`create_agent`](https://docs.langchain.com/oss/python/agents/create_agent) from `langchain.agents` with custom tool error handling.
+</Warning>
+
+**Defined in:** `langgraph/prebuilt/tool_validator.py:47`
+
+## Class Definition
+
+```python
+class ValidationNode(RunnableCallable):
+    def __init__(
+        self,
+        schemas: Sequence[BaseTool | type[BaseModel] | Callable],
+        *,
+        format_error: Callable[[BaseException, ToolCall, type[BaseModel]], str]
+        | None = None,
+        name: str = "validation",
+        tags: list[str] | None = None,
+    ) -> None
+```
+
+## Parameters
+
+<ParamField path="schemas" type="Sequence[BaseTool | type[BaseModel] | Callable]" required>
+  A list of schemas to validate the tool calls with. These can be any of the following:
+  - A pydantic BaseModel class
+  - A BaseTool instance (the args_schema will be used)
+  - A function (a schema will be created from the function signature)
+</ParamField>
+
+<ParamField path="format_error" type="Callable[[BaseException, ToolCall, type[BaseModel]], str] | None" default="None">
+  A function that takes an exception, a ToolCall, and a schema and returns a formatted error string. By default, it returns the exception repr and a message to respond after fixing validation errors.
+</ParamField>
+
+<ParamField path="name" type="str" default="'validation'">
+  The name of the node.
+</ParamField>
+
+<ParamField path="tags" type="list[str] | None" default="None">
+  A list of tags to add to the node.
+</ParamField>
+
+## Input/Output
+
+<ParamField path="input" type="list[AnyMessage] | dict[str, Any]">
+  Can be used either in `StateGraph` with a `'messages'` key or with a list of messages.
+</ParamField>
+
+<ParamField path="output" type="dict[str, list[ToolMessage]] | list[ToolMessage]">
+  A list of `ToolMessage` objects with the validated content or error messages.
+  - If input is a dict: returns `{"messages": [ToolMessage(...)]}`
+  - If input is a list: returns `[ToolMessage(...)]`
+</ParamField>
+
+## How It Works
+
+The `ValidationNode` performs the following steps:
+
+1. Extracts the last `AIMessage` from the input
+2. Iterates through all tool calls in that message
+3. For each tool call, validates the arguments against the corresponding schema
+4. Returns `ToolMessage` objects with:
+   - The validated content (as JSON) if validation succeeds
+   - An error message if validation fails (with `additional_kwargs={"is_error": True}`)
+
+<Note>
+This node does not actually **run** the tools, it only validates the tool calls. This is useful for extraction and other use cases where you need to generate structured output that conforms to a complex schema without losing the original messages and tool IDs (for use in multi-turn conversations).
+</Note>
+
+## Usage Example
+
+### Re-prompting for Valid Response
+
+```python
+from typing import Literal, Annotated
+from typing_extensions import TypedDict
+
+from langchain_anthropic import ChatAnthropic
+from pydantic import BaseModel, field_validator
+
+from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt import ValidationNode
+from langgraph.graph.message import add_messages
+
+class SelectNumber(BaseModel):
+    a: int
+
+    @field_validator("a")
+    def a_must_be_meaningful(cls, v):
+        if v != 37:
+            raise ValueError("Only 37 is allowed")
+        return v
+
+builder = StateGraph(Annotated[list, add_messages])
+llm = ChatAnthropic(model="claude-3-5-haiku-latest").bind_tools([SelectNumber])
+builder.add_node("model", llm)
+builder.add_node("validation", ValidationNode([SelectNumber]))
+builder.add_edge(START, "model")
+
+def should_validate(state: list) -> Literal["validation", "__end__"]:
+    if state[-1].tool_calls:
+        return "validation"
+    return END
+
+builder.add_conditional_edges("model", should_validate)
+
+def should_reprompt(state: list) -> Literal["model", "__end__"]:
+    for msg in state[::-1]:
+        # None of the tool calls were errors
+        if msg.type == "ai":
+            return END
+        if msg.additional_kwargs.get("is_error"):
+            return "model"
+    return END
+
+builder.add_conditional_edges("validation", should_reprompt)
+
+graph = builder.compile()
+res = graph.invoke(("user", "Select a number, any number"))
+# Show the retry logic
+for msg in res:
+    msg.pretty_print()
+```
+
+### Custom Error Formatting
+
+```python
+from langchain_core.messages import ToolCall
+from pydantic import BaseModel
+from langgraph.prebuilt import ValidationNode
+
+def custom_error_formatter(
+    error: BaseException,
+    call: ToolCall,
+    schema: type[BaseModel]
+) -> str:
+    """Custom error message for validation failures."""
+    return f"Tool '{call['name']}' validation failed: {str(error)}. Please try again with valid arguments."
+
+class UserInfo(BaseModel):
+    name: str
+    age: int
+
+validation_node = ValidationNode(
+    [UserInfo],
+    format_error=custom_error_formatter
+)
+```
+
+### With Multiple Schemas
+
+```python
+from pydantic import BaseModel, Field
+from langgraph.prebuilt import ValidationNode
+
+class SearchQuery(BaseModel):
+    query: str = Field(description="The search query")
+    max_results: int = Field(default=10, ge=1, le=100)
+
+class WeatherQuery(BaseModel):
+    location: str = Field(description="City name or zip code")
+    units: str = Field(default="celsius", pattern="^(celsius|fahrenheit)$")
+
+validation_node = ValidationNode([SearchQuery, WeatherQuery])
+```
+
+### Using Functions as Schemas
+
+```python
+from langgraph.prebuilt import ValidationNode
+
+def calculate_sum(a: int, b: int) -> int:
+    """Add two numbers together."""
+    return a + b
+
+def get_user_age(user_id: str) -> int:
+    """Get the age of a user by ID."""
+    return 0
+
+# Schemas will be automatically created from function signatures
+validation_node = ValidationNode([calculate_sum, get_user_age])
+```
+
+### Integration with StateGraph
+
+```python
+from typing_extensions import TypedDict
+from langchain_core.messages import BaseMessage
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
+from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ValidationNode
+
+class ExtractionSchema(BaseModel):
+    name: str
+    email: str
+    age: int
+
+class State(TypedDict):
+    messages: list[BaseMessage]
+
+def call_model(state: State):
+    llm = ChatOpenAI().bind_tools([ExtractionSchema])
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+def route_after_validation(state: State):
+    last_message = state["messages"][-1]
+    # Check if there were validation errors
+    if hasattr(last_message, "additional_kwargs") and last_message.additional_kwargs.get("is_error"):
+        return "model"  # Re-prompt the model
+    return END  # Validation succeeded
+
+builder = StateGraph(State)
+builder.add_node("model", call_model)
+builder.add_node("validation", ValidationNode([ExtractionSchema]))
+builder.add_edge(START, "model")
+builder.add_edge("model", "validation")
+builder.add_conditional_edges("validation", route_after_validation)
+
+graph = builder.compile()
+result = graph.invoke({
+    "messages": [{"role": "user", "content": "Extract: John Doe, john@example.com, 30"}]
+})
+```
+
+## Properties
+
+<ParamField path="schemas_by_name" type="dict[str, type[BaseModel]]">
+  Mapping from schema name to BaseModel class. This is populated during initialization and contains all the schemas that can be validated.
+</ParamField>
+
+## Validation Behavior
+
+### Successful Validation
+
+When validation succeeds:
+- Returns a `ToolMessage` with the validated content serialized as JSON
+- The `tool_call_id` matches the original tool call ID
+- No `additional_kwargs` are set
+
+```python
+ToolMessage(
+    content='{"name": "John", "age": 30}',
+    name="UserInfo",
+    tool_call_id="call_123",
+)
+```
+
+### Failed Validation
+
+When validation fails:
+- Returns a `ToolMessage` with the error message from `format_error`
+- The `tool_call_id` matches the original tool call ID
+- Sets `additional_kwargs={"is_error": True}` to indicate an error
+
+```python
+ToolMessage(
+    content="ValidationError: age must be positive\n\nRespond after fixing all validation errors.",
+    name="UserInfo",
+    tool_call_id="call_123",
+    additional_kwargs={"is_error": True},
+)
+```
+
+## Common Use Cases
+
+### 1. Structured Data Extraction
+
+Validate that extracted information matches the expected schema before processing:
+
+```python
+from pydantic import BaseModel
+from langgraph.prebuilt import ValidationNode
+
+class Article(BaseModel):
+    title: str
+    author: str
+    publish_date: str
+    summary: str
+
+validation_node = ValidationNode([Article])
+```
+
+### 2. Form Input Validation
+
+Ensure user inputs conform to required formats:
+
+```python
+from pydantic import BaseModel, EmailStr, Field
+from langgraph.prebuilt import ValidationNode
+
+class RegistrationForm(BaseModel):
+    email: EmailStr
+    username: str = Field(min_length=3, max_length=20)
+    age: int = Field(ge=18, le=120)
+
+validation_node = ValidationNode([RegistrationForm])
+```
+
+### 3. Multi-Step Extraction with Retry
+
+Validate extraction and re-prompt on errors:
+
+```python
+from pydantic import BaseModel
+from langgraph.graph import StateGraph
+from langgraph.prebuilt import ValidationNode
+
+class ContactInfo(BaseModel):
+    name: str
+    phone: str
+    email: str
+
+def should_retry(state):
+    last_msg = state["messages"][-1]
+    if last_msg.additional_kwargs.get("is_error"):
+        return "model"  # Retry extraction
+    return "__end__"  # Success
+
+builder = StateGraph(State)
+builder.add_node("extract", extraction_model)
+builder.add_node("validate", ValidationNode([ContactInfo]))
+builder.add_conditional_edges("validate", should_retry)
+```
+
+## See Also
+
+- [ToolNode](/api/prebuilt/tool-node) - For actually executing tools (not just validating)
+- [create_react_agent](/api/prebuilt/create-react-agent) - Factory function for ReAct agents
+- [Pydantic BaseModel](https://docs.pydantic.dev/latest/concepts/models/) - Schema validation framework used by ValidationNode

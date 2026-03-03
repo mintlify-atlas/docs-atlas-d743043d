@@ -1,0 +1,525 @@
+---
+title: Errors
+description: Error types and exception handling in LangGraph
+---
+
+This page documents all error types and exceptions used in LangGraph, along with guidance on how to handle them.
+
+## Error Codes
+
+<ParamField path="ErrorCode" type="Enum">
+  Enumeration of error codes for common LangGraph errors.
+
+  Each error code corresponds to a specific type of failure and links to detailed troubleshooting documentation.
+
+  **Defined in:** `langgraph/errors.py:29`
+</ParamField>
+
+### Values
+
+<ParamField path="GRAPH_RECURSION_LIMIT" type="ErrorCode">
+  Graph has exhausted the maximum number of steps.
+
+  **Troubleshooting:** [GRAPH_RECURSION_LIMIT](https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT)
+</ParamField>
+
+<ParamField path="INVALID_CONCURRENT_GRAPH_UPDATE" type="ErrorCode">
+  Multiple nodes attempted to update the same channel concurrently with incompatible values.
+
+  **Troubleshooting:** [INVALID_CONCURRENT_GRAPH_UPDATE](https://docs.langchain.com/oss/python/langgraph/errors/INVALID_CONCURRENT_GRAPH_UPDATE)
+</ParamField>
+
+<ParamField path="INVALID_GRAPH_NODE_RETURN_VALUE" type="ErrorCode">
+  A node returned an invalid value that cannot be processed by the graph.
+
+  **Troubleshooting:** [INVALID_GRAPH_NODE_RETURN_VALUE](https://docs.langchain.com/oss/python/langgraph/errors/INVALID_GRAPH_NODE_RETURN_VALUE)
+</ParamField>
+
+<ParamField path="MULTIPLE_SUBGRAPHS" type="ErrorCode">
+  Multiple subgraphs are configured incorrectly.
+
+  **Troubleshooting:** [MULTIPLE_SUBGRAPHS](https://docs.langchain.com/oss/python/langgraph/errors/MULTIPLE_SUBGRAPHS)
+</ParamField>
+
+<ParamField path="INVALID_CHAT_HISTORY" type="ErrorCode">
+  Chat history is in an invalid format.
+
+  **Troubleshooting:** [INVALID_CHAT_HISTORY](https://docs.langchain.com/oss/python/langgraph/errors/INVALID_CHAT_HISTORY)
+</ParamField>
+
+## Exception Types
+
+### GraphRecursionError
+
+<ParamField path="GraphRecursionError" type="class">
+  Raised when the graph has exhausted the maximum number of steps.
+
+  This prevents infinite loops. To increase the maximum number of steps, run your graph with a config specifying a higher `recursion_limit`.
+
+  **Inherits from:** `RecursionError`  
+  **Defined in:** `langgraph/errors.py:45`
+</ParamField>
+
+#### When It Occurs
+
+This error is raised when:
+- A graph executes more steps than allowed by `recursion_limit` (default is 25)
+- There's an infinite loop in your graph logic
+- Your workflow is legitimately long but needs a higher limit
+
+#### How to Fix
+
+```python
+from langgraph.graph import StateGraph
+from langgraph.errors import GraphRecursionError
+
+builder = StateGraph(State)
+# ... add nodes and edges ...
+graph = builder.compile()
+
+try:
+    # Increase the recursion limit
+    result = graph.invoke(
+        {"messages": [("user", "Hello, world!")]},
+        {"recursion_limit": 1000}  # Allow up to 1000 steps
+    )
+except GraphRecursionError as e:
+    print(f"Graph took too many steps: {e}")
+    # Handle the error - perhaps the graph has an infinite loop
+```
+
+#### Best Practices
+
+1. **Set appropriate limits:** Choose a recursion limit based on your expected workflow length
+2. **Add loop detection:** Use state fields to track iteration counts
+3. **Add exit conditions:** Ensure conditional edges eventually lead to END
+
+```python
+class State(TypedDict):
+    messages: list
+    iteration_count: int
+
+def should_continue(state: State) -> str:
+    # Prevent infinite loops by checking iteration count
+    if state["iteration_count"] >= 10:
+        return "end"
+    if needs_more_processing(state):
+        return "continue"
+    return "end"
+
+builder.add_conditional_edges(
+    "process_node",
+    should_continue,
+    {
+        "continue": "process_node",
+        "end": END
+    }
+)
+```
+
+### InvalidUpdateError
+
+<ParamField path="InvalidUpdateError" type="class">
+  Raised when attempting to update a channel with an invalid set of updates.
+
+  This typically occurs when:
+  - Multiple nodes try to write incompatible values to the same channel
+  - A node returns a value that doesn't match the expected state schema
+
+  **Inherits from:** `Exception`  
+  **Defined in:** `langgraph/errors.py:68`
+</ParamField>
+
+#### Common Causes
+
+1. **Concurrent conflicting updates:** Multiple parallel nodes updating the same non-reducible channel
+2. **Invalid return values:** Node returns wrong type or structure
+3. **Multiple Overwrite values:** Multiple `Overwrite` objects for the same channel
+
+#### Examples and Solutions
+
+##### Concurrent Updates
+
+```python
+from typing import Annotated
+import operator
+
+class State(TypedDict):
+    # This will cause InvalidUpdateError if multiple nodes update it
+    value: str
+    # This is safe for concurrent updates (uses operator.add)
+    items: Annotated[list, operator.add]
+
+# Problem: Both nodes run in parallel and update 'value'
+def node_a(state: State):
+    return {"value": "A"}
+
+def node_b(state: State):
+    return {"value": "B"}  # Conflict!
+
+# Solution 1: Use a reducer
+class State(TypedDict):
+    value: Annotated[str, lambda x, y: y]  # Last write wins
+
+# Solution 2: Don't run nodes in parallel for shared channels
+builder.add_edge("node_a", "node_b")  # Sequential
+
+# Solution 3: Use different channels
+class State(TypedDict):
+    value_a: str
+    value_b: str
+```
+
+##### Invalid Return Values
+
+```python
+# Problem: Wrong return type
+def bad_node(state: State):
+    return "just a string"  # InvalidUpdateError!
+
+# Solution: Return a dict matching the state schema
+def good_node(state: State):
+    return {"value": "correct format"}
+
+# Problem: Missing required fields
+class State(TypedDict):
+    required_field: str
+    optional_field: str | None
+
+def incomplete_node(state: State):
+    return {}  # May cause InvalidUpdateError
+
+def complete_node(state: State):
+    return {"required_field": "value"}
+```
+
+### GraphInterrupt
+
+<ParamField path="GraphInterrupt" type="class">
+  Raised when a subgraph is interrupted, suppressed by the root graph.
+
+  This exception is never raised directly to the user - it's an internal exception used by LangGraph to handle interrupts. Users should use the `interrupt()` function instead.
+
+  **Inherits from:** `GraphBubbleUp`  
+  **Defined in:** `langgraph/errors.py:84`
+</ParamField>
+
+#### Usage
+
+This is an internal exception. For human-in-the-loop workflows, use [`interrupt()`](/api/types#interrupt):
+
+```python
+from langgraph.types import interrupt, Command
+
+def my_node(state: State):
+    # Use interrupt() instead of raising GraphInterrupt
+    user_input = interrupt("What should I do next?")
+    return {"action": user_input}
+```
+
+### NodeInterrupt (Deprecated)
+
+<ParamField path="NodeInterrupt" type="class">
+  **Deprecated:** Use [`interrupt()`](/api/types#interrupt) instead.
+
+  Raised by a node to interrupt execution.
+
+  **Inherits from:** `GraphInterrupt`  
+  **Defined in:** `langgraph/errors.py:96`  
+  **Deprecated in:** v1.0
+</ParamField>
+
+#### Migration
+
+```python
+# Old (deprecated)
+from langgraph.errors import NodeInterrupt
+
+def old_node(state: State):
+    raise NodeInterrupt("Need user input")
+
+# New (recommended)
+from langgraph.types import interrupt
+
+def new_node(state: State):
+    user_input = interrupt("Need user input")
+    return {"input": user_input}
+```
+
+### ParentCommand
+
+<ParamField path="ParentCommand" type="class">
+  Internal exception used to bubble up commands to parent graphs.
+
+  This is an internal exception used by LangGraph's command system. Users don't need to handle or raise this exception directly.
+
+  **Inherits from:** `GraphBubbleUp`  
+  **Defined in:** `langgraph/errors.py:111`
+</ParamField>
+
+### EmptyInputError
+
+<ParamField path="EmptyInputError" type="class">
+  Raised when graph receives an empty input.
+
+  **Inherits from:** `Exception`  
+  **Defined in:** `langgraph/errors.py:118`
+</ParamField>
+
+#### When It Occurs
+
+```python
+# This will raise EmptyInputError
+graph.invoke(None)
+graph.invoke({})
+
+# Valid inputs
+graph.invoke({"messages": []})
+graph.invoke({"value": 0})
+```
+
+#### How to Handle
+
+```python
+from langgraph.errors import EmptyInputError
+
+try:
+    result = graph.invoke(user_input)
+except EmptyInputError:
+    print("Please provide valid input")
+    result = graph.invoke({"messages": ["default message"]})
+```
+
+### TaskNotFound
+
+<ParamField path="TaskNotFound" type="class">
+  Raised when the executor is unable to find a task (for distributed mode).
+
+  This error occurs in distributed execution mode when a task cannot be located or has been lost.
+
+  **Inherits from:** `Exception`  
+  **Defined in:** `langgraph/errors.py:124`
+</ParamField>
+
+### EmptyChannelError
+
+<ParamField path="EmptyChannelError" type="class">
+  Raised when attempting to read from a channel that has no value.
+
+  This error is re-exported from `langgraph.checkpoint.base`.
+
+  **Defined in:** `langgraph/errors.py:9`
+</ParamField>
+
+#### When It Occurs
+
+```python
+class State(TypedDict):
+    optional_field: str | None
+    required_field: str
+
+def my_node(state: State):
+    # This might raise EmptyChannelError if optional_field was never set
+    value = state["optional_field"]
+    return {"result": value}
+
+# Solution: Provide defaults or check existence
+def safe_node(state: State):
+    value = state.get("optional_field", "default")
+    return {"result": value}
+```
+
+## Error Handling Patterns
+
+### Pattern 1: Graceful Degradation
+
+```python
+from langgraph.errors import GraphRecursionError, InvalidUpdateError
+
+def run_graph_safely(graph, input_data, config=None):
+    config = config or {}
+    
+    try:
+        return graph.invoke(input_data, config)
+    except GraphRecursionError:
+        # Handle infinite loops
+        print("Graph took too many steps, returning partial result")
+        state = graph.get_state(config)
+        return state.values
+    except InvalidUpdateError as e:
+        # Handle invalid updates
+        print(f"Invalid update: {e}")
+        return {"error": "Invalid state update"}
+    except EmptyInputError:
+        # Handle empty input
+        return graph.invoke({"messages": []}, config)
+```
+
+### Pattern 2: Retry with Adjusted Config
+
+```python
+def invoke_with_retry(graph, input_data, max_retries=3):
+    recursion_limit = 25
+    
+    for attempt in range(max_retries):
+        try:
+            config = {"recursion_limit": recursion_limit}
+            return graph.invoke(input_data, config)
+        except GraphRecursionError:
+            recursion_limit *= 2
+            print(f"Retry {attempt + 1}: Increasing limit to {recursion_limit}")
+    
+    raise Exception("Graph failed after max retries")
+```
+
+### Pattern 3: State Validation
+
+```python
+from typing import TypedDict
+from langgraph.errors import InvalidUpdateError
+
+class State(TypedDict):
+    value: int
+    status: str
+
+def validate_state(state: dict) -> dict:
+    """Validate and clean state before processing."""
+    if not isinstance(state.get("value"), int):
+        raise InvalidUpdateError("'value' must be an integer")
+    
+    if state.get("status") not in ["pending", "complete"]:
+        state["status"] = "pending"
+    
+    return state
+
+def my_node(state: State):
+    try:
+        validated = validate_state(state)
+        # Process validated state
+        return {"value": validated["value"] + 1}
+    except InvalidUpdateError as e:
+        print(f"Validation error: {e}")
+        return {"value": 0, "status": "error"}
+```
+
+### Pattern 4: Logging and Monitoring
+
+```python
+import logging
+from langgraph.errors import GraphRecursionError, InvalidUpdateError
+
+logger = logging.getLogger(__name__)
+
+def monitored_invoke(graph, input_data, config=None):
+    try:
+        logger.info(f"Starting graph execution with input: {input_data}")
+        result = graph.invoke(input_data, config)
+        logger.info(f"Graph completed successfully")
+        return result
+    
+    except GraphRecursionError as e:
+        logger.error(f"Graph recursion limit exceeded: {e}")
+        raise
+    
+    except InvalidUpdateError as e:
+        logger.error(f"Invalid state update: {e}")
+        raise
+    
+    except Exception as e:
+        logger.exception(f"Unexpected error during graph execution: {e}")
+        raise
+```
+
+## Utilities
+
+### create_error_message
+
+<ParamField path="create_error_message(message, error_code)" type="function">
+  Create a formatted error message with a link to troubleshooting documentation.
+
+  **Parameters:**
+  - `message` (str): The error message
+  - `error_code` (ErrorCode): The error code enum value
+
+  **Returns:** str - Formatted error message with documentation link
+
+  **Defined in:** `langgraph/errors.py:37`
+</ParamField>
+
+#### Usage
+
+```python
+from langgraph.errors import create_error_message, ErrorCode
+
+message = create_error_message(
+    message="Graph exceeded maximum steps",
+    error_code=ErrorCode.GRAPH_RECURSION_LIMIT
+)
+
+print(message)
+# Output:
+# Graph exceeded maximum steps
+# For troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT
+```
+
+## Best Practices
+
+### 1. Set Appropriate Recursion Limits
+
+```python
+# For simple, short workflows
+config = {"recursion_limit": 50}
+
+# For complex workflows with many steps
+config = {"recursion_limit": 500}
+
+# For potentially infinite workflows (use with caution)
+config = {"recursion_limit": 10000}
+```
+
+### 2. Use Reducers for Concurrent Updates
+
+```python
+import operator
+from typing import Annotated
+
+class State(TypedDict):
+    # Safe for concurrent updates
+    messages: Annotated[list, operator.add]
+    count: Annotated[int, operator.add]
+    
+    # Requires sequential updates or last-write-wins reducer
+    status: str
+```
+
+### 3. Validate Node Outputs
+
+```python
+def my_node(state: State) -> dict:
+    result = complex_operation(state)
+    
+    # Validate before returning
+    if not isinstance(result, dict):
+        raise InvalidUpdateError("Node must return a dict")
+    
+    return result
+```
+
+### 4. Handle Interrupts Properly
+
+```python
+from langgraph.types import interrupt, Command
+
+def node_with_interrupt(state: State):
+    # Request human input
+    user_decision = interrupt("Approve this action?")
+    
+    if user_decision == "approved":
+        return {"status": "approved"}
+    else:
+        return {"status": "rejected"}
+
+# Resume with Command
+command = Command(resume="approved")
+graph.stream(command, config)
+```
