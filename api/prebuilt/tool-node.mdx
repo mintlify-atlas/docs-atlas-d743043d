@@ -123,7 +123,7 @@ Output format depends on input type and tool behavior:
 ### Basic Usage
 
 ```python
-from langchain.tools import ToolNode
+from langgraph.prebuilt import ToolNode
 from langchain_core.tools import tool
 
 @tool
@@ -138,7 +138,8 @@ tool_node = ToolNode([calculator])
 
 ```python
 from typing_extensions import Annotated
-from langchain.tools import InjectedState, ToolNode, tool
+from langgraph.prebuilt import InjectedState, ToolNode
+from langchain_core.tools import tool
 
 @tool
 def context_tool(query: str, state: Annotated[dict, InjectedState]) -> str:
@@ -151,7 +152,8 @@ tool_node = ToolNode([context_tool])
 ### Custom Error Handling
 
 ```python
-from langchain.tools import ToolNode, tool
+from langgraph.prebuilt import ToolNode
+from langchain_core.tools import tool
 
 def handle_errors(e: ValueError) -> str:
     return "Invalid input provided"
@@ -171,7 +173,8 @@ tool_node = ToolNode([my_tool], handle_tool_errors=handle_errors)
 ```python
 from typing_extensions import Annotated
 from langgraph.store.base import BaseStore
-from langchain.tools import InjectedStore, ToolNode, tool
+from langgraph.prebuilt import InjectedStore, ToolNode
+from langchain_core.tools import tool
 
 @tool
 def save_data(
@@ -189,7 +192,8 @@ tool_node = ToolNode([save_data])
 ### Runtime Context Access
 
 ```python
-from langchain.tools import ToolNode, ToolRuntime, tool
+from langgraph.prebuilt import ToolNode, ToolRuntime
+from langchain_core.tools import tool
 
 @tool
 def context_aware_tool(x: int, runtime: ToolRuntime) -> str:
@@ -220,10 +224,11 @@ tool_node = ToolNode([context_aware_tool])
 ### Tool Call Wrapper for Retries
 
 ```python
-from langchain.tools import ToolNode, ToolCallRequest, tool
+from langgraph.prebuilt import ToolNode
+from langchain_core.tools import tool
 from langchain_core.messages import ToolMessage
 
-def retry_wrapper(request: ToolCallRequest, execute):
+def retry_wrapper(request, execute):
     """Retry tool execution up to 3 times."""
     for attempt in range(3):
         try:
@@ -251,7 +256,8 @@ tool_node = ToolNode([unreliable_tool], wrap_tool_call=retry_wrapper)
 
 ```python
 from langchain_core.messages import AIMessage
-from langchain.tools import ToolNode, tool
+from langgraph.prebuilt import ToolNode
+from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
 
@@ -361,7 +367,8 @@ print(result["messages"])
 ```python
 from typing_extensions import Annotated, TypedDict
 from langchain_core.messages import BaseMessage
-from langchain.tools import InjectedState, ToolNode, tool
+from langgraph.prebuilt import InjectedState, ToolNode
+from langchain_core.tools import tool
 
 class AgentState(TypedDict):
     messages: list[BaseMessage]
@@ -403,8 +410,10 @@ node = ToolNode([state_tool, foo_tool])
 
 ```python
 from typing_extensions import Annotated
+from typing import Any
 from langgraph.store.memory import InMemoryStore
-from langchain.tools import InjectedStore, ToolNode, tool
+from langgraph.prebuilt import InjectedStore, ToolNode
+from langchain_core.tools import tool
 
 @tool
 def save_preference(
@@ -468,7 +477,7 @@ compiled_graph = graph.compile(store=store)  # Store is injected automatically
 
 ```python
 from langgraph.graph import StateGraph
-from langchain.tools import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode, tools_condition
 from typing_extensions import TypedDict
 
 class State(TypedDict):
